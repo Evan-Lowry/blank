@@ -128,13 +128,14 @@ async function exportAssessment(request) {
       images.push(image);
     }
   }
-  const pdf = makePdf(images);
+  const { pdf, pageImages } = makePdf(images);
   const filename = (title.replace(/[^a-z\d]+/gi, '-').replace(/^-|-$/g, '') || 'crowdmark-assessment') + '-blank.pdf';
   return new Response(pdf, { headers: {
     ...privateHeaders,
     'Content-Type': 'application/pdf',
     'Content-Disposition': 'attachment; filename="' + filename + '"',
     'X-Assessment-Title': encodeURIComponent(title),
+    'X-Page-Images': JSON.stringify(pageImages),
     'X-Page-Count': String(images.length),
     'X-First-Page': String(ordered[0][0]),
     'X-Last-Page': String(ordered.at(-1)[0]),
@@ -148,7 +149,7 @@ export default {
       return new Response(HTML, { headers: {
         'Content-Type': 'text/html; charset=utf-8',
         'Referrer-Policy': 'no-referrer',
-        'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-src blob:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+        'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' blob:; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
         ...privateHeaders,
       } });
     }

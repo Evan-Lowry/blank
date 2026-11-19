@@ -99,16 +99,10 @@
     white-space: nowrap;
   }
   .result { margin-top: .85rem; }
-  .result-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 1rem;
-  }
   .result h2 { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
   .result p { margin: .2rem 0 0; color: var(--muted); font-size: .875rem; }
 
-  .actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+  .actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .85rem; }
   .secondary {
     background: transparent;
     border-color: #555555;
@@ -117,15 +111,18 @@
   .secondary:hover { background: #303030; }
   .pdf-preview {
     width: 100%;
-    height: clamp(22rem, 70vh, 48rem);
-    display: block;
+    max-height: 70vh;
+    display: grid;
+    gap: .65rem;
+    overflow: auto;
+    padding: .65rem;
     margin-top: 1rem;
     border: 1px solid var(--border);
     border-radius: .25rem;
     background: var(--field);
   }
-  @media (max-width: 38rem) {
-    .result-row { flex-direction: column; align-items: stretch; }
+  .pdf-preview img { width: 100%; height: auto; display: block; background: white; }
+  @media (max-width: 30rem) {
     .actions > * { flex: 1; }
   }
 </style>
@@ -147,17 +144,13 @@
     <p class="status" id="status" role="status"></p>
   </div>
   <section class="panel result" id="result" hidden aria-labelledby="result-title">
-    <div class="result-row">
-      <div>
-        <h2 id="result-title"></h2>
-        <p id="result-details"></p>
-      </div>
-      <div class="actions">
-        <button type="button" class="secondary" id="preview-toggle" aria-expanded="false" aria-controls="pdf-preview">Preview PDF</button>
-        <a class="download" id="download">Download PDF</a>
-      </div>
+    <h2 id="result-title"></h2>
+    <p id="result-details"></p>
+    <div class="actions">
+      <button type="button" class="secondary" id="preview-toggle" aria-expanded="false" aria-controls="pdf-preview" hidden>Preview PDF</button>
+      <a class="download" id="download">Download PDF</a>
     </div>
-    <iframe class="pdf-preview" id="pdf-preview" title="Blank assessment PDF preview" hidden></iframe>
+    <div class="pdf-preview" id="pdf-preview" role="region" aria-label="Blank assessment PDF preview" tabindex="0" hidden></div>
   </section>
 </main>
 <script>
@@ -170,21 +163,37 @@
   const previewToggle = document.querySelector('#preview-toggle');
   const pdfPreview = document.querySelector('#pdf-preview');
   let currentUrl;
+  let previewDocument;
+  const pageUrls = [];
 
   function showPreview(show) {
     pdfPreview.hidden = !show;
     previewToggle.setAttribute('aria-expanded', String(show));
     previewToggle.textContent = show ? 'Hide preview' : 'Preview PDF';
-    if (show) pdfPreview.src = currentUrl;
-    else pdfPreview.removeAttribute('src');
+    if (!show || !previewDocument || pageUrls.length) return;
+
+    const { pdf, ranges, first } = previewDocument;
+    ranges.forEach(([offset, length], index) => {
+      const page = document.createElement('img');
+      page.loading = index === 0 ? 'eager' : 'lazy';
+      page.alt = 'Booklet page ' + (first + index);
+      const url = URL.createObjectURL(pdf.slice(offset, offset + length, 'image/jpeg'));
+      pageUrls.push(url);
+      page.src = url;
+      pdfPreview.append(page);
+    });
   }
 
   previewToggle.addEventListener('click', () => showPreview(pdfPreview.hidden));
 
   function clearResult() {
     showPreview(false);
+    pdfPreview.replaceChildren();
+    for (const url of pageUrls.splice(0)) URL.revokeObjectURL(url);
     if (currentUrl) URL.revokeObjectURL(currentUrl);
     currentUrl = undefined;
+    previewDocument = undefined;
+    previewToggle.hidden = true;
     download.removeAttribute('href');
     result.hidden = true;
     status.textContent = '';
@@ -220,7 +229,13 @@
       const last = Number(response.headers.get('X-Last-Page'));
       const count = Number(response.headers.get('X-Page-Count'));
       const filename = /filename="([^"]+)"/.exec(response.headers.get('Content-Disposition') || '')?.[1];
-      currentUrl = URL.createObjectURL(await response.blob());
+      const pdf = await response.blob();
+      const ranges = JSON.parse(response.headers.get('X-Page-Images') || '[]');
+      if (Array.isArray(ranges) && ranges.length > 0) {
+        previewDocument = { pdf, ranges, first };
+        previewToggle.hidden = false;
+      }
+      currentUrl = URL.createObjectURL(pdf);
       download.href = currentUrl;
       download.download = filename || 'crowdmark-assessment-blank.pdf';
       document.querySelector('#result-title').textContent = title;

@@ -25,6 +25,7 @@ function jpegSize(bytes) {
 export function makePdf(images) {
   const chunks = [];
   const offsets = [0];
+  const pageImages = [];
   let size = 0;
   function append(value) {
     const bytes = typeof value === 'string' ? encoder.encode(value) : value;
@@ -35,12 +36,15 @@ export function makePdf(images) {
     const id = offsets.length;
     offsets.push(size);
     append(id + ' 0 obj\n' + value);
+    let streamOffset;
     if (stream) {
       append('\nstream\n');
+      streamOffset = size;
       append(stream);
       append('\nendstream');
     }
     append('\nendobj\n');
+    return streamOffset;
   }
   append('%PDF-1.4\n');
   append(new Uint8Array([37, 226, 227, 207, 211, 10]));
@@ -59,8 +63,9 @@ export function makePdf(images) {
       '] /Resources << /XObject << /PageImage ' + (pageId + 1) +
       ' 0 R >> >> /Contents ' + (pageId + 2) + ' 0 R >>');
     const color = components === 1 ? '/DeviceGray' : '/DeviceRGB';
-    object('<< /Type /XObject /Subtype /Image /Width ' + width + ' /Height ' + height +
+    const imageOffset = object('<< /Type /XObject /Subtype /Image /Width ' + width + ' /Height ' + height +
       ' /ColorSpace ' + color + ' /BitsPerComponent 8 /Filter /DCTDecode /Length ' + image.length + ' >>', image);
+    pageImages.push([imageOffset, image.length]);
     const command = encoder.encode('q\n' + [w, 0, 0, h, (pageWidth - w) / 2, (pageHeight - h) / 2]
       .map(value => value.toFixed(4)).join(' ') + ' cm\n/PageImage Do\nQ\n');
     object('<< /Length ' + command.length + ' >>', command);
@@ -71,5 +76,5 @@ export function makePdf(images) {
     append(String(offset).padStart(10, '0') + ' 00000 n \n');
   }
   append('trailer\n<< /Size ' + offsets.length + ' /Root 1 0 R >>\nstartxref\n' + xref + '\n%%EOF\n');
-  return new Blob(chunks, { type: 'application/pdf' });
+  return { pdf: new Blob(chunks, { type: 'application/pdf' }), pageImages };
 }
