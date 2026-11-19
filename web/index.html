@@ -117,26 +117,36 @@
     position: sticky;
     top: 1rem;
   }
-  .viewer-heading {
+  .viewer-toolbar {
     display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: .75rem;
+    justify-content: center;
+    gap: .25rem;
+    margin-bottom: .65rem;
   }
-  .viewer-heading h2 { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
+  .viewer-toolbar button {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+    padding: .35rem .65rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .viewer-toolbar button:disabled { cursor: default; }
+  #zoom-fit { min-width: 4.5rem; }
   .pdf-preview {
     width: 100%;
     max-height: 70vh;
-    display: grid;
-    gap: .65rem;
     overflow: auto;
     padding: .65rem;
-    margin-top: 1rem;
     border: 1px solid var(--border);
     border-radius: .25rem;
     background: var(--field);
   }
-  .pdf-preview img { width: min(100%, 54rem); height: auto; display: block; margin-inline: auto; background: white; }
+  .pdf-pages {
+    display: grid;
+    gap: .65rem;
+    width: var(--pdf-zoom, 100%);
+    margin-inline: auto;
+  }
+  .pdf-pages img { width: 100%; height: auto; display: block; background: white; }
   @media (max-width: 50rem) {
     .workspace.split { display: grid; width: min(100%, 38rem); grid-template-columns: minmax(0, 1fr); }
     .viewer { position: static; }
@@ -167,12 +177,15 @@
     </form>
     <div id="results"></div>
   </div>
-  <section class="panel viewer" id="viewer" aria-labelledby="viewer-title" hidden>
-    <div class="viewer-heading">
-      <h2 id="viewer-title"></h2>
-      <button type="button" class="secondary" id="close-preview">Close preview</button>
+  <section class="panel viewer" id="viewer" aria-label="PDF preview" hidden>
+    <div class="viewer-toolbar" role="group" aria-label="PDF zoom">
+      <button type="button" class="secondary" id="zoom-out" aria-label="Zoom out">−</button>
+      <button type="button" class="secondary" id="zoom-fit" aria-label="Fit to width, 100%" title="Fit to width">100%</button>
+      <button type="button" class="secondary" id="zoom-in" aria-label="Zoom in">+</button>
     </div>
-    <div class="pdf-preview" id="pdf-preview" role="region" aria-label="PDF pages" tabindex="0"></div>
+    <div class="pdf-preview" id="pdf-preview" role="region" aria-label="PDF pages" tabindex="0">
+      <div class="pdf-pages" id="pdf-pages"></div>
+    </div>
   </section>
 </div>
 </main>
@@ -203,12 +216,37 @@
   const template = document.querySelector('#result-template');
   const workspace = document.querySelector('#workspace');
   const viewer = document.querySelector('#viewer');
-  const viewerTitle = document.querySelector('#viewer-title');
   const preview = document.querySelector('#pdf-preview');
-  const closePreview = document.querySelector('#close-preview');
+  const pages = document.querySelector('#pdf-pages');
+  const zoomOut = document.querySelector('#zoom-out');
+  const zoomFit = document.querySelector('#zoom-fit');
+  const zoomIn = document.querySelector('#zoom-in');
   const objectUrls = new Set();
   const pageUrls = [];
+  const minZoom = 50;
+  const maxZoom = 200;
+  const zoomStep = 25;
   let activePreview;
+  let zoom = 100;
+
+  function setZoom(percent) {
+    const next = Math.min(maxZoom, Math.max(minZoom, percent));
+    const scale = next / zoom;
+    const scrollTop = preview.scrollTop;
+    const horizontalCenter = preview.scrollLeft + preview.clientWidth / 2;
+    zoom = next;
+    pages.style.setProperty('--pdf-zoom', zoom + '%');
+    zoomFit.textContent = zoom + '%';
+    zoomFit.setAttribute('aria-label', 'Fit to width, current zoom ' + zoom + '%');
+    zoomOut.disabled = zoom === minZoom;
+    zoomIn.disabled = zoom === maxZoom;
+    preview.scrollTop = scrollTop * scale;
+    preview.scrollLeft = horizontalCenter * scale - preview.clientWidth / 2;
+  }
+
+  zoomOut.addEventListener('click', () => setZoom(zoom - zoomStep));
+  zoomFit.addEventListener('click', () => setZoom(100));
+  zoomIn.addEventListener('click', () => setZoom(zoom + zoomStep));
 
   function updateLinkLabels() {
     [...fields.children].forEach((row, index) => {
@@ -262,14 +300,16 @@
     button.textContent = 'Preview PDF';
     viewer.hidden = true;
     workspace.classList.remove('split');
-    preview.replaceChildren();
+    pages.replaceChildren();
     for (const url of pageUrls.splice(0)) URL.revokeObjectURL(url);
     if (returnFocus) button.focus();
   }
 
-  closePreview.addEventListener('click', () => hidePreview(true));
+  viewer.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') hidePreview(true);
+  });
 
-  function wirePreview(button, title, pdf, ranges, first) {
+  function wirePreview(button, pdf, ranges, first) {
     if (!ranges.length) return;
     button.hidden = false;
     button.addEventListener('click', () => {
@@ -281,7 +321,6 @@
       activePreview = button;
       button.setAttribute('aria-expanded', 'true');
       button.textContent = 'Hide preview';
-      viewerTitle.textContent = title;
       ranges.forEach(([offset, length], index) => {
         const page = document.createElement('img');
         page.loading = index === 0 ? 'eager' : 'lazy';
@@ -289,11 +328,12 @@
         const url = URL.createObjectURL(pdf.slice(offset, offset + length, 'image/jpeg'));
         pageUrls.push(url);
         page.src = url;
-        preview.append(page);
+        pages.append(page);
       });
       viewer.hidden = false;
       workspace.classList.add('split');
-      preview.scrollTop = 0;
+      setZoom(100);
+      preview.scrollTo(0, 0);
       if (matchMedia('(max-width: 50rem)').matches) viewer.scrollIntoView({ block: 'start' });
     });
   }
@@ -385,7 +425,7 @@
       row.title.textContent = title;
       row.details.textContent = count + (count === 1 ? ' blank page.' : ' blank pages.') +
         (first > 1 ? ' Crowdmark supplied booklet pages ' + (first === last ? first : first + '–' + last) + '.' : '');
-      if (Array.isArray(ranges)) wirePreview(row.previewButton, title, pdf, ranges, first);
+      if (Array.isArray(ranges)) wirePreview(row.previewButton, pdf, ranges, first);
       row.download.href = objectUrl(pdf);
       row.download.download = filename || 'crowdmark-assessment-blank.pdf';
       row.actions.hidden = false;
