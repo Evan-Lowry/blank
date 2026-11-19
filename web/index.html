@@ -314,13 +314,56 @@
     return { title, details, actions, previewButton, download };
   }
 
+  async function getBlankReferences(link) {
+    try {
+      const url = new URL(link);
+      const score = /^\/score\/([a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})\/?$/i.exec(url.pathname);
+      if (url.origin !== 'https://app.crowdmark.com' || url.username || url.password || !score) return;
+      const id = score[1].toLowerCase();
+      const response = await fetch(url.origin + '/api/v1/student/results/' + id, {
+        headers: { Accept: 'application/json' },
+        credentials: 'omit',
+        redirect: 'error',
+        cache: 'no-store',
+        signal: AbortSignal.timeout(12000),
+      });
+      if (!response.ok) return;
+
+      const { data, included } = await response.json();
+      if (data?.id !== id || !Array.isArray(included)) return;
+      const masterRef = data.relationships?.['exam-master']?.data;
+      const master = included.find(item => item.type === 'exam-masters' && item.id === masterRef?.id);
+      const pageRefs = master?.relationships?.['exam-master-pages']?.data;
+      if (!master || !Array.isArray(pageRefs)) return;
+      const pageIds = new Set(pageRefs.map(page => page.id));
+      const pages = included.filter(item => item.type === 'exam-master-pages' && pageIds.has(item.id))
+        .map(({ id, type, attributes }) => {
+          const { number, url } = (Array.isArray(attributes) ? attributes[0] : attributes) || {};
+          return { id, type, attributes: { number, url } };
+        });
+
+      return {
+        data: { id, relationships: { 'exam-master': { data: masterRef } } },
+        included: [{
+          id: master.id,
+          type: master.type,
+          attributes: { title: master.attributes?.title },
+          relationships: { 'exam-master-pages': { data: pageRefs } },
+        }, ...pages],
+      };
+    } catch {
+      // The server can also retrieve the public results response.
+    }
+  }
+
   async function prepareAssessment(link, row) {
     row.details.textContent = 'Fetching blank pages…';
     try {
+      const template = await getBlankReferences(link);
       const response = await fetch('/api/export', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ link }),
+        body: JSON.stringify({ link, template }),
         signal: AbortSignal.timeout(60000),
       });
       if (!response.ok) {

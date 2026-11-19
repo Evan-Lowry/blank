@@ -51,7 +51,7 @@ function templatePages(payload) {
       throw new ExportError(422, 'Crowdmark did not provide every blank booklet page.');
     }
     if (url.origin !== 'https://assets.crowdmark.com' || url.username || url.password ||
-        !/^\/exam_masters\/[^/]+\/preview_jpegs\/[^/]+\.jpe?g$/i.test(url.pathname)) {
+        !/^\/exam_masters\/[a-z0-9_-]+\/preview_jpegs\/[a-z0-9_-]+\.jpe?g$/i.test(url.pathname)) {
       throw new ExportError(422, 'Crowdmark returned an unrecognized blank-page format.');
     }
     pages.set(number, url);
@@ -102,22 +102,25 @@ async function readBytes(response, limit) {
 }
 
 async function exportAssessment(request) {
-  const body = await readBytes(new Response(request.body, { headers: request.headers }), 4096);
-  let link;
+  const body = await readBytes(new Response(request.body, { headers: request.headers }), 48 * 1024);
+  let input;
   try {
-    link = JSON.parse(new TextDecoder().decode(body))?.link;
+    input = JSON.parse(new TextDecoder().decode(body));
   } catch {
     throw new ExportError(400, 'Paste a valid Crowdmark results link.');
   }
-  const id = scoreId(link);
-  const response = await upstream(crowdmarkOrigin + '/api/v1/student/results/' + id, {
-    headers: { Accept: 'application/json' },
-  });
-  if ([401, 403, 404].includes(response.status)) {
-    throw new ExportError(404, 'Crowdmark couldn’t open this assessment. Check that the shareable results link opens while signed out.');
+  const id = scoreId(input?.link);
+  let payload = input.template;
+  if (payload?.data?.id !== id) {
+    const response = await upstream(crowdmarkOrigin + '/api/v1/student/results/' + id, {
+      headers: { Accept: 'application/json' },
+    });
+    if ([401, 403, 404].includes(response.status)) {
+      throw new ExportError(404, 'Crowdmark couldn’t open this assessment. Check that the shareable results link opens while signed out.');
+    }
+    if (!response.ok) throw new Error('Crowdmark response failed.');
+    payload = JSON.parse(new TextDecoder().decode(await readBytes(response, 4 * 1024 * 1024)));
   }
-  if (!response.ok) throw new Error('Crowdmark response failed.');
-  const payload = JSON.parse(new TextDecoder().decode(await readBytes(response, 4 * 1024 * 1024)));
   const { ordered, title } = templatePages(payload);
   const images = [];
   let total = 0;
@@ -157,7 +160,7 @@ export default {
       return new Response(HTML, { headers: {
         'Content-Type': 'text/html; charset=utf-8',
         'Referrer-Policy': 'no-referrer',
-        'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' blob:; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+        'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' blob:; connect-src 'self' https://app.crowdmark.com; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
         ...privateHeaders,
       } });
     }
