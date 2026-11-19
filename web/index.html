@@ -23,9 +23,9 @@
   [hidden] { display: none !important; }
 
   main {
-    width: min(33rem, calc(100% - 2rem));
+    width: min(100rem, calc(100% - clamp(2rem, 8vw, 7rem)));
     margin-inline: auto;
-    padding-block: clamp(3rem, 15vh, 8rem) 3rem;
+    padding-block: clamp(2rem, 9vh, 5.5rem) 3rem;
   }
   h1 {
     margin: 0 0 1.25rem;
@@ -38,7 +38,6 @@
   .panel {
     padding: clamp(1rem, 4vw, 1.5rem);
     border: 1px solid var(--border);
-    border-radius: .5rem;
     background: var(--panel);
   }
   .field-heading {
@@ -55,10 +54,11 @@
   .help { color: var(--muted); text-decoration-thickness: 1px; text-underline-offset: .19em; }
   .help:hover { color: var(--text); }
   .entry { display: grid; gap: .75rem; }
-  input {
+  textarea {
     width: 100%;
     min-width: 0;
-    min-height: 3rem;
+    min-height: 7.5rem;
+    resize: vertical;
     padding: .68rem .85rem;
     border: 1px solid #555555;
     border-radius: .5rem;
@@ -66,7 +66,7 @@
     color: var(--text);
     font: inherit;
   }
-  input::placeholder { color: #a1a1a1; }
+  textarea::placeholder { color: #a1a1a1; }
   button, .download {
     display: inline-flex;
     justify-content: center;
@@ -90,18 +90,11 @@
   .status { margin: .85rem 0 0; color: var(--muted); font-size: .875rem; }
   .status:empty { margin: 0; }
   .status.error { color: #ffb2ac; }
-  .status.ready {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
   .result { margin-top: .85rem; }
   .result h2 { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
-  .result p { margin: .2rem 0 0; color: var(--muted); font-size: .875rem; }
+  .result .details { margin: .2rem 0 0; color: var(--muted); font-size: .875rem; }
 
+  .result .details.error { color: #ffb2ac; }
   .actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .85rem; }
   .secondary {
     background: transparent;
@@ -121,7 +114,7 @@
     border-radius: .25rem;
     background: var(--field);
   }
-  .pdf-preview img { width: 100%; height: auto; display: block; background: white; }
+  .pdf-preview img { width: min(100%, 54rem); height: auto; display: block; margin-inline: auto; background: white; }
   @media (max-width: 30rem) {
     .actions > * { flex: 1; }
   }
@@ -130,91 +123,91 @@
 <body>
 <main>
   <h1>Crowdmark to Blank PDF</h1>
-  <div class="panel">
-    <form id="export-form" method="post">
-      <div class="field-heading">
-        <label for="link">Shareable Crowdmark link</label>
-        <a class="help" href="https://www.crowdmark.com/help/sharing-a-graded-assignment-or-test/" target="_blank" rel="noopener noreferrer">Find your link</a>
-      </div>
-      <div class="entry">
-        <input type="url" id="link" name="link" required placeholder="https://app.crowdmark.com/score/…" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="2048">
-        <button type="submit" id="prepare">Prepare PDF</button>
-      </div>
-    </form>
-    <p class="status" id="status" role="status"></p>
-  </div>
-  <section class="panel result" id="result" hidden aria-labelledby="result-title">
-    <h2 id="result-title"></h2>
-    <p id="result-details"></p>
-    <div class="actions">
-      <button type="button" class="secondary" id="preview-toggle" aria-expanded="false" aria-controls="pdf-preview" hidden>Preview PDF</button>
-      <a class="download" id="download">Download PDF</a>
+  <form class="panel" id="export-form" method="post">
+    <div class="field-heading">
+      <label for="links">Shareable Crowdmark links</label>
+      <a class="help" href="https://www.crowdmark.com/help/sharing-a-graded-assignment-or-test/" target="_blank" rel="noopener noreferrer">Find your link</a>
     </div>
-    <div class="pdf-preview" id="pdf-preview" role="region" aria-label="Blank assessment PDF preview" tabindex="0" hidden></div>
-  </section>
+    <div class="entry">
+      <textarea id="links" name="links" rows="3" required placeholder="Paste one link per line" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
+      <button type="submit" id="prepare">Prepare PDFs</button>
+    </div>
+    <p class="status" id="status" role="status"></p>
+  </form>
+  <div id="results"></div>
 </main>
+<template id="result-template">
+  <section class="panel result">
+    <h2></h2>
+    <p class="details" role="status"></p>
+    <div class="actions" hidden>
+      <button type="button" class="secondary" aria-expanded="false" hidden>Preview PDF</button>
+      <a class="download">Download PDF</a>
+    </div>
+    <div class="pdf-preview" role="region" tabindex="0" hidden></div>
+  </section>
+</template>
 <script>
   const form = document.querySelector('#export-form');
-  const field = document.querySelector('#link');
+  const field = document.querySelector('#links');
   const prepare = document.querySelector('#prepare');
   const status = document.querySelector('#status');
-  const result = document.querySelector('#result');
-  const download = document.querySelector('#download');
-  const previewToggle = document.querySelector('#preview-toggle');
-  const pdfPreview = document.querySelector('#pdf-preview');
-  let currentUrl;
-  let previewDocument;
-  const pageUrls = [];
+  const results = document.querySelector('#results');
+  const template = document.querySelector('#result-template');
+  const objectUrls = new Set();
 
-  function showPreview(show) {
-    pdfPreview.hidden = !show;
-    previewToggle.setAttribute('aria-expanded', String(show));
-    previewToggle.textContent = show ? 'Hide preview' : 'Preview PDF';
-    if (!show || !previewDocument || pageUrls.length) return;
+  function objectUrl(blob) {
+    const url = URL.createObjectURL(blob);
+    objectUrls.add(url);
+    return url;
+  }
 
-    const { pdf, ranges, first } = previewDocument;
-    ranges.forEach(([offset, length], index) => {
-      const page = document.createElement('img');
-      page.loading = index === 0 ? 'eager' : 'lazy';
-      page.alt = 'Booklet page ' + (first + index);
-      const url = URL.createObjectURL(pdf.slice(offset, offset + length, 'image/jpeg'));
-      pageUrls.push(url);
-      page.src = url;
-      pdfPreview.append(page);
+  function wirePreview(button, preview, pdf, ranges, first) {
+    if (!ranges.length) return;
+    button.hidden = false;
+    button.addEventListener('click', () => {
+      const show = preview.hidden;
+      preview.hidden = !show;
+      button.setAttribute('aria-expanded', String(show));
+      button.textContent = show ? 'Hide preview' : 'Preview PDF';
+      if (!show || preview.childElementCount) return;
+
+      ranges.forEach(([offset, length], index) => {
+        const page = document.createElement('img');
+        page.loading = index === 0 ? 'eager' : 'lazy';
+        page.alt = 'Booklet page ' + (first + index);
+        page.src = objectUrl(pdf.slice(offset, offset + length, 'image/jpeg'));
+        preview.append(page);
+      });
     });
   }
 
-  previewToggle.addEventListener('click', () => showPreview(pdfPreview.hidden));
+  function addResult(index) {
+    const card = template.content.firstElementChild.cloneNode(true);
+    const title = card.querySelector('h2');
+    const details = card.querySelector('.details');
+    const actions = card.querySelector('.actions');
+    const preview = card.querySelector('.pdf-preview');
+    const previewButton = actions.querySelector('button');
+    const download = actions.querySelector('a');
 
-  function clearResult() {
-    showPreview(false);
-    pdfPreview.replaceChildren();
-    for (const url of pageUrls.splice(0)) URL.revokeObjectURL(url);
-    if (currentUrl) URL.revokeObjectURL(currentUrl);
-    currentUrl = undefined;
-    previewDocument = undefined;
-    previewToggle.hidden = true;
-    download.removeAttribute('href');
-    result.hidden = true;
-    status.textContent = '';
-    status.classList.remove('error', 'ready');
+    title.id = 'assessment-' + (index + 1);
+    title.textContent = 'Assessment ' + (index + 1);
+    card.setAttribute('aria-labelledby', title.id);
+    details.textContent = 'Waiting…';
+    preview.id = 'preview-' + (index + 1);
+    previewButton.setAttribute('aria-controls', preview.id);
+    results.append(card);
+    return { title, details, actions, preview, previewButton, download };
   }
 
-  field.addEventListener('input', clearResult);
-
-  form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    clearResult();
-    prepare.disabled = true;
-    field.readOnly = true;
-    prepare.textContent = 'Preparing…';
-    form.setAttribute('aria-busy', 'true');
-    status.textContent = 'Fetching blank pages…';
+  async function prepareAssessment(link, row) {
+    row.details.textContent = 'Fetching blank pages…';
     try {
       const response = await fetch('/api/export', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ link: field.value }),
+        body: JSON.stringify({ link }),
         signal: AbortSignal.timeout(60000),
       });
       if (!response.ok) {
@@ -224,35 +217,68 @@
       if (!response.headers.get('Content-Type')?.startsWith('application/pdf')) {
         throw new Error('The export service returned an unexpected response.');
       }
+
       const title = decodeURIComponent(response.headers.get('X-Assessment-Title') || 'Crowdmark assessment');
       const first = Number(response.headers.get('X-First-Page'));
       const last = Number(response.headers.get('X-Last-Page'));
       const count = Number(response.headers.get('X-Page-Count'));
       const filename = /filename="([^"]+)"/.exec(response.headers.get('Content-Disposition') || '')?.[1];
-      const pdf = await response.blob();
       const ranges = JSON.parse(response.headers.get('X-Page-Images') || '[]');
-      if (Array.isArray(ranges) && ranges.length > 0) {
-        previewDocument = { pdf, ranges, first };
-        previewToggle.hidden = false;
-      }
-      currentUrl = URL.createObjectURL(pdf);
-      download.href = currentUrl;
-      download.download = filename || 'crowdmark-assessment-blank.pdf';
-      document.querySelector('#result-title').textContent = title;
-      document.querySelector('#result-details').textContent = count + (count === 1 ? ' blank page.' : ' blank pages.') +
+      const pdf = await response.blob();
+
+      row.title.textContent = title;
+      row.details.textContent = count + (count === 1 ? ' blank page.' : ' blank pages.') +
         (first > 1 ? ' Crowdmark supplied booklet pages ' + (first === last ? first : first + '–' + last) + '.' : '');
-      result.hidden = false;
-      status.classList.add('ready');
-      status.textContent = 'PDF ready to download.';
+      row.preview.setAttribute('aria-label', title + ' PDF preview');
+      if (Array.isArray(ranges)) wirePreview(row.previewButton, row.preview, pdf, ranges, first);
+      row.download.href = objectUrl(pdf);
+      row.download.download = filename || 'crowdmark-assessment-blank.pdf';
+      row.actions.hidden = false;
+      return true;
     } catch (error) {
-      status.classList.add('error');
-      status.textContent = error.name === 'TimeoutError' ? 'The export timed out. Try again.' : error.message;
-    } finally {
-      prepare.disabled = false;
-      field.readOnly = false;
-      prepare.textContent = 'Prepare PDF';
-      form.removeAttribute('aria-busy');
+      row.details.classList.add('error');
+      row.details.textContent = error.name === 'TimeoutError' ? 'The export timed out. Try again.' : error.message;
+      return false;
     }
+  }
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (prepare.disabled) return;
+    const links = [...new Set(field.value.split(/\s+/).filter(Boolean))];
+    status.classList.toggle('error', links.length === 0);
+    if (!links.length) {
+      status.textContent = 'Paste at least one Crowdmark link.';
+      return;
+    }
+
+    results.replaceChildren();
+    for (const url of objectUrls) URL.revokeObjectURL(url);
+    objectUrls.clear();
+    const rows = links.map((_, index) => addResult(index));
+    prepare.disabled = true;
+    prepare.textContent = 'Preparing…';
+    status.textContent = '';
+
+    let next = 0;
+    let succeeded = 0;
+    async function runQueue() {
+      while (next < links.length) {
+        const index = next++;
+        if (await prepareAssessment(links[index], rows[index])) succeeded++;
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(3, links.length) }, runQueue));
+
+    prepare.disabled = false;
+    prepare.textContent = 'Prepare PDFs';
+    if (links.length > 1) status.textContent = succeeded + ' of ' + links.length + ' PDFs ready.';
+  });
+
+  field.addEventListener('input', () => {
+    if (!status.classList.contains('error')) return;
+    status.textContent = '';
+    status.classList.remove('error');
   });
 </script>
 </body>
