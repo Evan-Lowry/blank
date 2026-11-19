@@ -22,33 +22,10 @@
   body { margin: 0; min-height: 100vh; background: var(--background); color: var(--text); }
   [hidden] { display: none !important; }
 
-  .header { border-bottom: 1px solid #323232; }
-  .brand {
-    min-height: 4rem;
-    max-width: 80rem;
-    margin-inline: auto;
-    padding-inline: clamp(1rem, 4vw, 2.5rem);
-    display: flex;
-    align-items: center;
-    gap: .65rem;
-    font-weight: 700;
-    letter-spacing: -.025em;
-  }
-  .mark {
-    display: grid;
-    place-items: center;
-    width: 1.8rem;
-    height: 1.8rem;
-    border: 1px solid #4c4c4c;
-    border-radius: .25rem;
-    color: #e6e6e6;
-  }
-  .mark svg { width: 1.1rem; }
-
   main {
     width: min(33rem, calc(100% - 2rem));
     margin-inline: auto;
-    padding-block: clamp(2.25rem, 10vh, 6.5rem) 3rem;
+    padding-block: clamp(3rem, 15vh, 8rem) 3rem;
   }
   h1 {
     margin: 0 0 1.25rem;
@@ -121,30 +98,39 @@
     clip-path: inset(50%);
     white-space: nowrap;
   }
-  .result {
+  .result { margin-top: .85rem; }
+  .result-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
     gap: 1rem;
-    margin-top: .85rem;
   }
   .result h2 { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
   .result p { margin: .2rem 0 0; color: var(--muted); font-size: .875rem; }
 
-  @media (max-width: 34rem) {
-    .result { flex-direction: column; align-items: stretch; }
+  .actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+  .secondary {
+    background: transparent;
+    border-color: #555555;
+    color: var(--text);
+  }
+  .secondary:hover { background: #303030; }
+  .pdf-preview {
+    width: 100%;
+    height: clamp(22rem, 70vh, 48rem);
+    display: block;
+    margin-top: 1rem;
+    border: 1px solid var(--border);
+    border-radius: .25rem;
+    background: var(--field);
+  }
+  @media (max-width: 38rem) {
+    .result-row { flex-direction: column; align-items: stretch; }
+    .actions > * { flex: 1; }
   }
 </style>
 </head>
 <body>
-<header class="header">
-  <div class="brand">
-    <span class="mark" aria-hidden="true">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round"><path d="M6 3h8l4 4v14H6zM14 3v5h4M9 13h6M9 16.5h6"/></svg>
-    </span>
-    Clean Copy
-  </div>
-</header>
 <main>
   <h1>Crowdmark to Blank PDF</h1>
   <div class="panel">
@@ -161,11 +147,17 @@
     <p class="status" id="status" role="status"></p>
   </div>
   <section class="panel result" id="result" hidden aria-labelledby="result-title">
-    <div>
-      <h2 id="result-title"></h2>
-      <p id="result-details"></p>
+    <div class="result-row">
+      <div>
+        <h2 id="result-title"></h2>
+        <p id="result-details"></p>
+      </div>
+      <div class="actions">
+        <button type="button" class="secondary" id="preview-toggle" aria-expanded="false" aria-controls="pdf-preview">Preview PDF</button>
+        <a class="download" id="download">Download PDF</a>
+      </div>
     </div>
-    <a class="download" id="download">Download PDF</a>
+    <iframe class="pdf-preview" id="pdf-preview" title="Blank assessment PDF preview" hidden></iframe>
   </section>
 </main>
 <script>
@@ -175,9 +167,22 @@
   const status = document.querySelector('#status');
   const result = document.querySelector('#result');
   const download = document.querySelector('#download');
+  const previewToggle = document.querySelector('#preview-toggle');
+  const pdfPreview = document.querySelector('#pdf-preview');
   let currentUrl;
 
+  function showPreview(show) {
+    pdfPreview.hidden = !show;
+    previewToggle.setAttribute('aria-expanded', String(show));
+    previewToggle.textContent = show ? 'Hide preview' : 'Preview PDF';
+    if (show) pdfPreview.src = currentUrl;
+    else pdfPreview.removeAttribute('src');
+  }
+
+  previewToggle.addEventListener('click', () => showPreview(pdfPreview.hidden));
+
   function clearResult() {
+    showPreview(false);
     if (currentUrl) URL.revokeObjectURL(currentUrl);
     currentUrl = undefined;
     download.removeAttribute('href');
