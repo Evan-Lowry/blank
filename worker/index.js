@@ -64,7 +64,15 @@ function templatePages(payload) {
 }
 
 async function upstream(url, init = {}) {
-  return fetch(url, { ...init, redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(12000) });
+  const headers = new Headers(init.headers);
+  headers.set('Cache-Control', 'no-store');
+  return fetch(url, {
+    ...init,
+    headers,
+    redirect: 'manual',
+    cf: { cacheTtl: 0 },
+    signal: AbortSignal.timeout(12000),
+  });
 }
 
 async function readBytes(response, limit) {
