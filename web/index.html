@@ -27,6 +27,14 @@
     margin-inline: auto;
     padding-block: clamp(2rem, 9vh, 5.5rem) 3rem;
   }
+  .workspace { width: min(100%, 38rem); margin-inline: auto; }
+  .workspace.split {
+    width: 100%;
+    display: grid;
+    grid-template-columns: minmax(18rem, 2fr) minmax(0, 3fr);
+    align-items: start;
+    gap: clamp(1rem, 3vw, 2.5rem);
+  }
   h1 {
     margin: 0 0 1.25rem;
     font-size: clamp(1.75rem, 5vw, 2.25rem);
@@ -50,15 +58,18 @@
     margin-bottom: .55rem;
     font-size: .875rem;
   }
-  label { font-weight: 650; }
+  #links-label { font-weight: 650; }
   .help { color: var(--muted); text-decoration-thickness: 1px; text-underline-offset: .19em; }
   .help:hover { color: var(--text); }
-  .entry { display: grid; gap: .75rem; }
-  textarea {
+  .entry, .links { display: grid; gap: .65rem; }
+  .link-row { display: flex; gap: .5rem; }
+  .link-row input { flex: 1; }
+  .form-buttons { display: flex; flex-wrap: wrap; gap: .65rem; }
+  #prepare { flex: 1; }
+  input {
     width: 100%;
     min-width: 0;
-    min-height: 7.5rem;
-    resize: vertical;
+    min-height: 3rem;
     padding: .68rem .85rem;
     border: 1px solid #555555;
     border-radius: .5rem;
@@ -66,7 +77,7 @@
     color: var(--text);
     font: inherit;
   }
-  textarea::placeholder { color: #a1a1a1; }
+  input::placeholder { color: #a1a1a1; }
   button, .download {
     display: inline-flex;
     justify-content: center;
@@ -102,6 +113,17 @@
     color: var(--text);
   }
   .secondary:hover { background: #303030; }
+  .viewer {
+    position: sticky;
+    top: 1rem;
+  }
+  .viewer-heading {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: .75rem;
+  }
+  .viewer-heading h2 { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
   .pdf-preview {
     width: 100%;
     max-height: 70vh;
@@ -115,6 +137,10 @@
     background: var(--field);
   }
   .pdf-preview img { width: min(100%, 54rem); height: auto; display: block; margin-inline: auto; background: white; }
+  @media (max-width: 50rem) {
+    .workspace.split { display: grid; width: min(100%, 38rem); grid-template-columns: minmax(0, 1fr); }
+    .viewer { position: static; }
+  }
   @media (max-width: 30rem) {
     .actions > * { flex: 1; }
   }
@@ -122,39 +148,105 @@
 </head>
 <body>
 <main>
-  <h1>Crowdmark to Blank PDF</h1>
-  <form class="panel" id="export-form" method="post">
-    <div class="field-heading">
-      <label for="links">Shareable Crowdmark links</label>
-      <a class="help" href="https://www.crowdmark.com/help/sharing-a-graded-assignment-or-test/" target="_blank" rel="noopener noreferrer">Find your link</a>
+<div class="workspace" id="workspace">
+  <div>
+    <h1>Crowdmark to Blank PDF</h1>
+    <form class="panel" id="export-form" method="post" novalidate>
+      <div class="field-heading">
+        <span id="links-label">Shareable Crowdmark links</span>
+        <a class="help" href="https://www.crowdmark.com/help/sharing-a-graded-assignment-or-test/" target="_blank" rel="noopener noreferrer">Find your link</a>
+      </div>
+      <div class="entry">
+        <div class="links" id="links" role="group" aria-labelledby="links-label"></div>
+        <div class="form-buttons">
+          <button type="button" class="secondary" id="add-link">Add another link</button>
+          <button type="submit" id="prepare">Prepare PDFs</button>
+        </div>
+      </div>
+      <p class="status" id="status" role="status"></p>
+    </form>
+    <div id="results"></div>
+  </div>
+  <section class="panel viewer" id="viewer" aria-labelledby="viewer-title" hidden>
+    <div class="viewer-heading">
+      <h2 id="viewer-title"></h2>
+      <button type="button" class="secondary" id="close-preview">Close preview</button>
     </div>
-    <div class="entry">
-      <textarea id="links" name="links" rows="3" required placeholder="Paste one link per line" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
-      <button type="submit" id="prepare">Prepare PDFs</button>
-    </div>
-    <p class="status" id="status" role="status"></p>
-  </form>
-  <div id="results"></div>
+    <div class="pdf-preview" id="pdf-preview" role="region" aria-label="PDF pages" tabindex="0"></div>
+  </section>
+</div>
 </main>
+<template id="link-template">
+  <div class="link-row">
+    <input type="url" name="link" placeholder="https://app.crowdmark.com/score/…" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <button type="button" class="secondary" hidden>Remove</button>
+  </div>
+</template>
 <template id="result-template">
   <section class="panel result">
     <h2></h2>
     <p class="details" role="status"></p>
     <div class="actions" hidden>
-      <button type="button" class="secondary" aria-expanded="false" hidden>Preview PDF</button>
+      <button type="button" class="secondary" aria-expanded="false" aria-controls="viewer" hidden>Preview PDF</button>
       <a class="download">Download PDF</a>
     </div>
-    <div class="pdf-preview" role="region" tabindex="0" hidden></div>
   </section>
 </template>
 <script>
   const form = document.querySelector('#export-form');
-  const field = document.querySelector('#links');
+  const fields = document.querySelector('#links');
+  const linkTemplate = document.querySelector('#link-template');
+  const addLink = document.querySelector('#add-link');
   const prepare = document.querySelector('#prepare');
   const status = document.querySelector('#status');
   const results = document.querySelector('#results');
   const template = document.querySelector('#result-template');
+  const workspace = document.querySelector('#workspace');
+  const viewer = document.querySelector('#viewer');
+  const viewerTitle = document.querySelector('#viewer-title');
+  const preview = document.querySelector('#pdf-preview');
+  const closePreview = document.querySelector('#close-preview');
   const objectUrls = new Set();
+  const pageUrls = [];
+  let activePreview;
+
+  function updateLinkLabels() {
+    [...fields.children].forEach((row, index) => {
+      row.querySelector('input').setAttribute('aria-label', 'Crowdmark link ' + (index + 1));
+      const remove = row.querySelector('button');
+      remove.setAttribute('aria-label', 'Remove link ' + (index + 1));
+      remove.hidden = fields.childElementCount === 1;
+    });
+  }
+
+  function addField(value = '', after) {
+    const row = linkTemplate.content.firstElementChild.cloneNode(true);
+    const input = row.querySelector('input');
+    input.value = value;
+    row.querySelector('button').addEventListener('click', () => {
+      const next = row.nextElementSibling || row.previousElementSibling;
+      row.remove();
+      updateLinkLabels();
+      next.querySelector('input').focus();
+    });
+    input.addEventListener('paste', (event) => {
+      const pasted = event.clipboardData.getData('text').trim().split(/\s+/).filter(Boolean);
+      if (pasted.length < 2) return;
+      event.preventDefault();
+      input.value = pasted[0];
+      let previous = row;
+      for (const link of pasted.slice(1)) previous = addField(link, previous);
+      previous.querySelector('input').focus();
+      status.textContent = '';
+    });
+    if (after) after.after(row);
+    else fields.append(row);
+    updateLinkLabels();
+    return row;
+  }
+
+  addField();
+  addLink.addEventListener('click', () => addField().querySelector('input').focus());
 
   function objectUrl(blob) {
     const url = URL.createObjectURL(blob);
@@ -162,23 +254,47 @@
     return url;
   }
 
-  function wirePreview(button, preview, pdf, ranges, first) {
+  function hidePreview(returnFocus = false) {
+    if (!activePreview) return;
+    const button = activePreview;
+    activePreview = undefined;
+    button.setAttribute('aria-expanded', 'false');
+    button.textContent = 'Preview PDF';
+    viewer.hidden = true;
+    workspace.classList.remove('split');
+    preview.replaceChildren();
+    for (const url of pageUrls.splice(0)) URL.revokeObjectURL(url);
+    if (returnFocus) button.focus();
+  }
+
+  closePreview.addEventListener('click', () => hidePreview(true));
+
+  function wirePreview(button, title, pdf, ranges, first) {
     if (!ranges.length) return;
     button.hidden = false;
     button.addEventListener('click', () => {
-      const show = preview.hidden;
-      preview.hidden = !show;
-      button.setAttribute('aria-expanded', String(show));
-      button.textContent = show ? 'Hide preview' : 'Preview PDF';
-      if (!show || preview.childElementCount) return;
-
+      if (button === activePreview) {
+        hidePreview();
+        return;
+      }
+      hidePreview();
+      activePreview = button;
+      button.setAttribute('aria-expanded', 'true');
+      button.textContent = 'Hide preview';
+      viewerTitle.textContent = title;
       ranges.forEach(([offset, length], index) => {
         const page = document.createElement('img');
         page.loading = index === 0 ? 'eager' : 'lazy';
         page.alt = 'Booklet page ' + (first + index);
-        page.src = objectUrl(pdf.slice(offset, offset + length, 'image/jpeg'));
+        const url = URL.createObjectURL(pdf.slice(offset, offset + length, 'image/jpeg'));
+        pageUrls.push(url);
+        page.src = url;
         preview.append(page);
       });
+      viewer.hidden = false;
+      workspace.classList.add('split');
+      preview.scrollTop = 0;
+      if (matchMedia('(max-width: 50rem)').matches) viewer.scrollIntoView({ block: 'start' });
     });
   }
 
@@ -187,7 +303,6 @@
     const title = card.querySelector('h2');
     const details = card.querySelector('.details');
     const actions = card.querySelector('.actions');
-    const preview = card.querySelector('.pdf-preview');
     const previewButton = actions.querySelector('button');
     const download = actions.querySelector('a');
 
@@ -195,10 +310,8 @@
     title.textContent = 'Assessment ' + (index + 1);
     card.setAttribute('aria-labelledby', title.id);
     details.textContent = 'Waiting…';
-    preview.id = 'preview-' + (index + 1);
-    previewButton.setAttribute('aria-controls', preview.id);
     results.append(card);
-    return { title, details, actions, preview, previewButton, download };
+    return { title, details, actions, previewButton, download };
   }
 
   async function prepareAssessment(link, row) {
@@ -229,8 +342,7 @@
       row.title.textContent = title;
       row.details.textContent = count + (count === 1 ? ' blank page.' : ' blank pages.') +
         (first > 1 ? ' Crowdmark supplied booklet pages ' + (first === last ? first : first + '–' + last) + '.' : '');
-      row.preview.setAttribute('aria-label', title + ' PDF preview');
-      if (Array.isArray(ranges)) wirePreview(row.previewButton, row.preview, pdf, ranges, first);
+      if (Array.isArray(ranges)) wirePreview(row.previewButton, title, pdf, ranges, first);
       row.download.href = objectUrl(pdf);
       row.download.download = filename || 'crowdmark-assessment-blank.pdf';
       row.actions.hidden = false;
@@ -245,13 +357,15 @@
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (prepare.disabled) return;
-    const links = [...new Set(field.value.split(/\s+/).filter(Boolean))];
+    const values = [...fields.querySelectorAll('input')].map(input => input.value.trim()).filter(Boolean);
+    const links = [...new Set(values)];
     status.classList.toggle('error', links.length === 0);
     if (!links.length) {
       status.textContent = 'Paste at least one Crowdmark link.';
       return;
     }
 
+    hidePreview();
     results.replaceChildren();
     for (const url of objectUrls) URL.revokeObjectURL(url);
     objectUrls.clear();
@@ -275,7 +389,7 @@
     if (links.length > 1) status.textContent = succeeded + ' of ' + links.length + ' PDFs ready.';
   });
 
-  field.addEventListener('input', () => {
+  fields.addEventListener('input', () => {
     if (!status.classList.contains('error')) return;
     status.textContent = '';
     status.classList.remove('error');
