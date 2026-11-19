@@ -10,7 +10,7 @@ createServer(async (incoming, outgoing) => {
       options.body = Readable.toWeb(incoming);
       options.duplex = 'half';
     }
-    const result = await worker.fetch(new Request('http://localhost:' + port + incoming.url, options));
+    const result = await worker.fetch(new Request('http://' + (incoming.headers.host === 'localhost:' + port ? 'localhost' : '127.0.0.1') + ':' + port + incoming.url, options));
     outgoing.writeHead(result.status, Object.fromEntries(result.headers));
     if (result.body) Readable.fromWeb(result.body).pipe(outgoing);
     else outgoing.end();
