@@ -6,7 +6,7 @@
 <meta name="description" content="Get the blank pages from a Crowdmark results link, and browse a Waterloo assessment bank.">
 <title>blank. · Blank PDFs and assessment bank</title>
 <meta name="turnstile-site-key" content="">
-<link rel="icon" href="./favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <style>
   :root {
     color-scheme: dark;
@@ -258,6 +258,16 @@
     .saved .list-row { grid-template-columns: 1fr; grid-template-areas: "type" "meta" "actions"; gap: .15rem; }
     .exams .exam-actions, .saved .exam-actions { justify-content: flex-start; margin-top: .5rem; }
   }
+  .row-check { display: none; position: absolute; left: .85rem; top: 50%; width: 1.15rem; height: 1.15rem; margin: 0; padding: 0; min-height: 0; transform: translateY(-50%); accent-color: var(--accent); }
+  #bank-view .row-check, #lists-view .row-check, .result .row-check { display: block; }
+  #bank-view .list-row[data-id], #lists-view .list-row[data-id] { position: relative; padding-left: 2.9rem; }
+  .result[data-id] { position: relative; padding-left: 2.9rem; }
+  .result .row-check { left: .85rem; }
+  .list-row.row-selected, .result.row-selected { background: var(--selected); box-shadow: inset 3px 0 var(--accent); }
+  .select-bar { position: fixed; left: 50%; bottom: 1rem; z-index: 6; transform: translateX(-50%); display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: .5rem; max-width: calc(100vw - 2rem); padding: .5rem .6rem; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--card); box-shadow: 0 8px 24px var(--shadow); }
+  .select-bar[hidden] { display: none; }
+  .select-bar button { min-height: 2.25rem; padding: .2rem .8rem; font-size: .875rem; font-weight: 600; }
+  #select-count { padding: 0 .4rem; color: var(--muted); font-size: .9rem; white-space: nowrap; }
   .row-menu { position: fixed; z-index: 20; min-width: 10rem; padding: .3rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); box-shadow: 0 8px 24px var(--shadow); }
   .menu-item { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; justify-content: flex-start; width: 100%; min-height: 2.25rem; padding: .35rem .7rem; border: 0; background: none; color: var(--text); font-size: .9rem; font-weight: 400; border-radius: .35rem; }
   .menu-item:hover { background: var(--hover); }
@@ -269,8 +279,12 @@
   .choice { display: flex; align-items: center; gap: .55rem; padding: .35rem 0; }
   .choice input { width: auto; min-height: 0; }
   dialog .actions { margin-top: 1rem; }
+  .has-selection main { padding-bottom: 8rem; }
   @media (max-width: 36rem) {
     .bank-toolbar select { min-width: 0; }
+    .select-bar { left: .75rem; right: .75rem; bottom: .75rem; max-width: none; transform: none; justify-content: stretch; gap: .4rem; }
+    .select-bar button { flex: 1 1 auto; padding-inline: .5rem; }
+    #select-count { flex: 1 1 100%; padding: 0 .2rem; }
   }
 
   @media (max-width: 50rem) {
@@ -279,6 +293,7 @@
     #preview-back { display: inline-flex; align-self: flex-start; margin-bottom: .65rem; min-height: 2.5rem; font-size: .9rem; padding: .35rem .75rem; }
     .viewer-frame { min-height: 0; height: auto; flex: 1; }
     body.pdf-open { overflow: hidden; }
+    body.pdf-open .select-bar { display: none; }
   }
   @media (max-width: 30rem) { .actions > * { flex: 1; } }
 </style>
@@ -341,6 +356,7 @@
         <h1 id="bank-heading">Assessment Bank</h1>
     <div class="bank-toolbar" id="bank-toolbar" hidden>
       <select id="bank-assessment" aria-label="Type"><option value="">All types</option><option>Midterm</option><option>Final</option><option>Quiz</option><option>Test</option><option>Exam</option><option>Assignment</option><option>Lab</option><option>Tutorial</option><option>Project</option><option>Practice</option><option>Other</option></select>
+      <button class="secondary" id="bank-share" type="button" hidden>Share</button>
       <button class="secondary" id="bank-zip" type="button" hidden>Download all</button>
     </div>
     </div>
@@ -430,6 +446,14 @@
   <p class="status" id="sync-status" role="status"></p>
   <div class="actions"><button type="button" class="secondary" id="sync-close">Close</button></div>
 </dialog>
+<div class="select-bar" id="select-bar" role="toolbar" aria-label="Selected assessments" hidden>
+  <span id="select-count">Select assessments</span>
+  <button type="button" class="secondary" id="select-all">Select all</button>
+  <button type="button" class="secondary" id="select-list" aria-haspopup="menu" aria-expanded="false">Add to list</button>
+  <button type="button" class="secondary" id="select-share">Share</button>
+  <button type="button" class="secondary" id="select-zip">Download</button>
+  <button type="button" class="secondary" id="select-done">Clear</button>
+</div>
 <template id="link-template">
   <div class="link-row">
     <input type="url" name="link" placeholder="https://app.crowdmark.com/score/…" autocomplete="off" autocapitalize="off" spellcheck="false">
@@ -585,7 +609,7 @@
   }
 
   async function zipFiles(files, archiveName) {
-    const { Zip, ZipPassThrough } = await import('./zip.mjs');
+    const { Zip, ZipPassThrough } = await import('/zip.mjs');
     const chunks = [];
     const zip = new Zip((error, chunk) => {
       if (error) throw error;
@@ -819,6 +843,7 @@
         const exam = published ? JSON.parse(response.headers.get('X-Bank-Exam')) : undefined;
         if (exam?.id) {
           addToImports(exam.id);
+          attachSelection(row.card, exam);
           row.more.hidden = false;
           row.more.addEventListener('click', event => {
             event.stopPropagation();

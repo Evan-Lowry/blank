@@ -48,6 +48,40 @@ function detectFromLabel(label) {
 const entryId = '[a-f0-9-]{36}';
 const bankHeaders = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
 
+const seasonLabels = { W: 'Winter', S: 'Spring', F: 'Fall' };
+
+// What a pasted link should say in a chat app: /e/<id> is one assessment, /MATH137 is a course. Only public entries.
+async function sharePageMeta(pathname, env) {
+  if (!env.DB) return;
+  const exam = /^\/e\/([a-f0-9-]{36})$/.exec(pathname);
+  const course = /^\/([A-Za-z]{2,8}\d{3}[A-Za-z]?)$/.exec(pathname);
+  const spaced = code => code.replace(/([A-Z]+)(\d)/, '$1 $2');
+  try {
+    if (exam) {
+      const row = await env.DB.prepare("SELECT course, term, assessment, assessment_number, page_count FROM exam_bank WHERE id = ? AND status = 'approved' AND course <> ''").bind(exam[1]).first();
+      if (!row) return;
+      const termName = row.term && seasonLabels[row.term.at(-1)] ? seasonLabels[row.term.at(-1)] + ' ' + row.term.slice(0, 4) : '';
+      const kind = row.assessment ? row.assessment + (row.assessment_number ? ' ' + row.assessment_number : '') : '';
+      return {
+        title: spaced(row.course) + ' · ' + [termName, kind].filter(Boolean).join(' '),
+        description: 'A blank ' + row.page_count + '-page copy' + ' to practise with. Free on blank.',
+      };
+    }
+    if (course) {
+      const code = course[1].toUpperCase();
+      const row = await env.DB.prepare("SELECT COUNT(*) AS n, MAX(term) AS latest FROM exam_bank WHERE course = ? AND status = 'approved'").bind(code).first();
+      if (!row?.n) return;
+      const latest = row.latest && seasonLabels[row.latest.at(-1)] ? ' Latest: ' + seasonLabels[row.latest.at(-1)] + ' ' + row.latest.slice(0, 4) + '.' : '';
+      return {
+        title: spaced(code) + ' assessments',
+        description: row.n + (row.n === 1 ? ' past assessment' : ' past assessments') + ' to practise with.' + latest + ' Free on blank.',
+      };
+    }
+  } catch (error) {
+    console.error('Share preview failed:', error.name, String(error.message).split('\n')[0]);
+  }
+}
+
 function bankJson(data, status = 200) {
   return Response.json(data, { status, headers: bankHeaders });
 }

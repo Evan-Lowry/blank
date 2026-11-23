@@ -17,6 +17,7 @@ const mainView = document.querySelector('main');
 const headerSlot = document.querySelector('#header-search-slot');
 const heroSlot = document.querySelector('#hero-search-slot');
 const bankZip = document.querySelector('#bank-zip');
+const bankShare = document.querySelector('#bank-share');
 const listsNav = document.querySelector('#lists-nav');
 const listsView = document.querySelector('#lists-view');
 const listsHeading = document.querySelector('#lists-heading');
@@ -51,6 +52,27 @@ let searchedCourse;
 function courseKey(value) {
   return value.toUpperCase().replace(/[\s-]+/g, '');
 }
+
+// Send a link: the phone's share sheet where there is one, otherwise copy it. Returns 'shared', 'copied', 'cancelled' or 'failed'.
+async function shareUrl(url, title) {
+  if (navigator.share && matchMedia('(pointer: coarse)').matches) {
+    try {
+      await navigator.share({ title, url });
+      return 'shared';
+    } catch (error) {
+      if (error.name === 'AbortError') return 'cancelled';
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    return 'copied';
+  } catch {
+    return 'failed';
+  }
+}
+const sharesNatively = () => Boolean(navigator.share) && matchMedia('(pointer: coarse)').matches;
+const examUrl = exam => location.origin + '/e/' + exam.id;
+const courseUrl = course => location.origin + '/' + course;
 
 function courseLabel(code) {
   return code ? code.replace(/([A-Z]+)(\d)/, '$1 $2') : 'Course unknown';
@@ -94,6 +116,7 @@ function goToBankCourse(course) {
 }
 
 function applyBankRoute() {
+  clearSelection();
   const mode = bankMode();
   // The search box only holds what the person typed. Moving to another page clears it.
   const page = coursePage();
@@ -236,6 +259,8 @@ async function loadCourse(page) {
   const request = ++bankRequest;
   bankList.replaceChildren();
   bankZip.hidden = true;
+  bankShare.hidden = true;
+  clearSelection();
   hidePreview();
   const query = new URLSearchParams({ course: page.course, assessment: bankAssessment.value, exact: '1' });
   bankStatus.textContent = 'Loading…';
@@ -246,6 +271,7 @@ async function loadCourse(page) {
     shownExams = exams;
     bankZip.hidden = exams.length < 2;
     bankZip.textContent = 'Download all (' + Math.min(exams.length, zipLimit) + ')';
+    bankShare.hidden = !page.course;
     if (!exams.length) return;
     const label = (a, b) => examLabel(a).localeCompare(examLabel(b), undefined, { numeric: true });
     const key = exam => (exam.term || '0000-').slice(0, 4) + (termOrder[exam.term?.at(-1)] || 0);
@@ -262,7 +288,7 @@ async function loadCourse(page) {
   }
 }
 
-function createExamRow(exam, { showCourse = false } = {}) {
+function buildExamRow(exam, { showCourse = false } = {}) {
   const row = document.createElement('div');
   row.className = 'list-row';
   row.setAttribute('role', 'row');
@@ -342,14 +368,17 @@ function menuItem(label, onSelect) {
 
 function placeMenu() {
   const box = menuOwner.getBoundingClientRect();
-  rowMenu.style.top = box.bottom + 4 + 'px';
+  const height = rowMenu.offsetHeight;
+  // Open upward when there is no room below (the selection bar sits at the bottom of the screen).
+  const flip = box.bottom + 4 + height > innerHeight - 8 && box.top - height - 4 > 8;
+  rowMenu.style.top = (flip ? box.top - height - 4 : box.bottom + 4) + 'px';
   rowMenu.style.right = document.documentElement.clientWidth - box.right + 'px';
 }
 
 function showMenuItems(items) {
   rowMenu.replaceChildren(...items);
-  placeMenu();
   rowMenu.hidden = false;
+  placeMenu();
   items.find(item => item.tagName === 'BUTTON' || item.tagName === 'INPUT')?.focus();
 }
 
@@ -379,13 +408,13 @@ function openRowMenu(button, exam) {
 function examMenuItems(exam) {
   const items = [];
   if (exam.course) {
-    const copy = menuItem('Copy link', async () => {
-      try {
-        await navigator.clipboard.writeText(location.origin + location.pathname + '#exam-bank/' + exam.course + '/' + exam.id);
-        copy.textContent = 'Copied';
-      } catch {
-        copy.textContent = 'Copy failed';
+    const copy = menuItem(sharesNatively() ? 'Share…' : 'Copy link', async () => {
+      const result = await shareUrl(examUrl(exam), courseLabel(exam.course) + ' ' + examLabel(exam));
+      if (result === 'cancelled') {
+        closeRowMenu();
+        return;
       }
+      copy.textContent = result === 'copied' ? 'Link copied' : result === 'shared' ? 'Shared' : 'Copy failed';
       setTimeout(closeRowMenu, 700);
     });
     items.push(copy);
@@ -431,7 +460,8 @@ function listPickerItems(exam) {
   return items;
 }
 
-function newListItems(exam) {
+function newListItems(target) {
+  const ids = Array.isArray(target) ? target : [target.id];
   const label = menuLabel('New list');
   if (readLists().length >= maxLists) {
     label.textContent = 'You have ' + maxLists + ' lists. Delete one first.';
@@ -445,8 +475,8 @@ function newListItems(exam) {
   input.addEventListener('keydown', event => {
     if (event.key !== 'Enter') return;
     event.preventDefault();
-    createList(input.value, [exam.id]);
-    markRows(exam.id);
+    createList(input.value, ids);
+    ids.forEach(markRows);
     closeRowMenu();
   });
   return [label, input];
@@ -690,6 +720,14 @@ async function zipExams(button, exams, archiveName, report, restoreLabel) {
     button.textContent = restoreLabel();
   }
 }
+
+bankShare.addEventListener('click', async () => {
+  const course = coursePage()?.course;
+  if (!course) return;
+  const result = await shareUrl(courseUrl(course), courseLabel(course) + ' assessments');
+  if (result !== 'cancelled') bankShare.textContent = result === 'failed' ? 'Copy failed' : result === 'shared' ? 'Shared' : 'Link copied';
+  setTimeout(() => { bankShare.textContent = 'Share'; }, 1800);
+});
 
 bankZip.addEventListener('click', () => {
   const course = coursePage()?.course;
@@ -1032,14 +1070,10 @@ listsMore.addEventListener('click', event => {
 listsShare.addEventListener('click', async () => {
   const list = readLists().find(item => item.id === listRoute().id);
   if (!list) return;
-  const url = location.origin + location.pathname + '#list=' + list.ids.join(',') + '&name=' + encodeURIComponent(list.name);
-  try {
-    await navigator.clipboard.writeText(url);
-    listsShare.textContent = 'Link copied';
-  } catch {
-    listsShare.textContent = 'Copy failed';
-  }
-  setTimeout(() => { listsShare.textContent = 'Copy share link'; }, 1800);
+  const url = location.origin + '/#list=' + list.ids.join(',') + '&name=' + encodeURIComponent(list.name);
+  const result = await shareUrl(url, list.name);
+  if (result !== 'cancelled') listsShare.textContent = result === 'failed' ? 'Copy failed' : result === 'shared' ? 'Shared' : 'Link copied';
+  setTimeout(() => { listsShare.textContent = sharesNatively() ? 'Share' : 'Copy share link'; }, 1800);
 });
 
 listsKeep.addEventListener('click', () => {
@@ -1338,4 +1372,198 @@ bankAssessment.addEventListener('change', () => {
   if (page) loadCourse(page);
 });
 window.addEventListener('hashchange', applyBankRoute);
-applyBankRoute();
+
+// Bulk select: like a file manager. Click a row to select it, Ctrl/Cmd-click to add or remove one, Shift-click for a range,
+// or use the checkboxes. A bar appears at the bottom while anything is selected.
+const selectedIds = new Set();
+const rowExams = new Map();
+const selectBar = document.querySelector('#select-bar');
+const selectCount = document.querySelector('#select-count');
+const selectList = document.querySelector('#select-list');
+const selectShare = document.querySelector('#select-share');
+const selectZip = document.querySelector('#select-zip');
+const converterStatus = document.querySelector('#status');
+let selectAnchor;
+
+const SELECTABLE = '.list-row[data-id], .result[data-id]';
+const visibleSelectRows = () => {
+  const view = [converterView, bankView, listsView].find(item => !item.hidden);
+  return view ? [...view.querySelectorAll(SELECTABLE)] : [];
+};
+
+function createExamRow(exam, options) {
+  const row = buildExamRow(exam, options);
+  attachSelection(row, exam);
+  return row;
+}
+
+// Makes a row (or a result card on the convert page) selectable.
+function attachSelection(row, exam) {
+  row.dataset.id = exam.id;
+  rowExams.set(exam.id, exam);
+  const check = document.createElement('input');
+  check.type = 'checkbox';
+  check.className = 'row-check';
+  check.setAttribute('aria-label', 'Select ' + examLabel(exam));
+  check.addEventListener('click', event => {
+    event.stopPropagation();
+    if (event.shiftKey && selectAnchor) selectRange(exam.id, event.ctrlKey || event.metaKey);
+    else {
+      setSelected(exam.id, check.checked);
+      selectAnchor = exam.id;
+    }
+    refreshSelection();
+  });
+  row.prepend(check);
+  row.addEventListener('mousedown', event => {
+    // Shift-click should select a range, not highlight text.
+    if (event.shiftKey && !event.target.closest('input')) event.preventDefault();
+  });
+  row.addEventListener('click', event => {
+    if (event.target.closest('button, a, input, select')) return;
+    const toggle = event.ctrlKey || event.metaKey || matchMedia('(pointer: coarse)').matches;
+    if (event.shiftKey && selectAnchor) selectRange(exam.id, toggle);
+    else if (toggle) {
+      setSelected(exam.id, !selectedIds.has(exam.id));
+      selectAnchor = exam.id;
+    } else {
+      const only = selectedIds.size === 1 && selectedIds.has(exam.id);
+      selectedIds.clear();
+      if (!only) selectedIds.add(exam.id);
+      selectAnchor = exam.id;
+    }
+    refreshSelection();
+  });
+  syncRowSelection(row);
+}
+
+function setSelected(id, on) {
+  if (!on) selectedIds.delete(id);
+  else if (selectedIds.size < savedLimit) selectedIds.add(id);
+  else selectCount.textContent = 'Up to ' + savedLimit + ' at a time';
+}
+
+// Shift-click: everything between the last clicked row and this one (added to the selection with Ctrl/Cmd).
+function selectRange(id, keep) {
+  const ids = visibleSelectRows().map(row => row.dataset.id);
+  const from = ids.indexOf(selectAnchor);
+  const to = ids.indexOf(id);
+  if (from < 0 || to < 0) return;
+  if (!keep) selectedIds.clear();
+  for (const other of ids.slice(Math.min(from, to), Math.max(from, to) + 1)) setSelected(other, true);
+}
+
+function syncRowSelection(row) {
+  const on = selectedIds.has(row.dataset.id);
+  row.classList.toggle('row-selected', on);
+  const box = row.querySelector('.row-check');
+  if (box) box.checked = on;
+}
+
+function refreshSelection() {
+  for (const row of document.querySelectorAll(SELECTABLE)) syncRowSelection(row);
+  const count = selectedIds.size;
+  selectBar.hidden = !count;
+  document.body.classList.toggle('has-selection', count > 0);
+  selectCount.textContent = count + ' selected';
+  closeRowMenu();
+}
+
+function clearSelection() {
+  selectedIds.clear();
+  selectAnchor = undefined;
+  refreshSelection();
+}
+
+const selectedExams = () => [...selectedIds].map(id => rowExams.get(id)).filter(Boolean);
+
+document.querySelector('#select-done').addEventListener('click', clearSelection);
+document.querySelector('#select-all').addEventListener('click', () => {
+  const rows = visibleSelectRows().slice(0, savedLimit);
+  const everyOne = rows.length && rows.every(row => selectedIds.has(row.dataset.id));
+  selectedIds.clear();
+  if (!everyOne) rows.forEach(row => selectedIds.add(row.dataset.id));
+  refreshSelection();
+});
+document.addEventListener('keydown', event => {
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName) || event.target.isContentEditable;
+  if (event.key === 'Escape' && selectedIds.size && rowMenu.hidden && !document.querySelector('dialog[open]')) clearSelection();
+  else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a' && !typing) {
+    const rows = visibleSelectRows().slice(0, savedLimit);
+    if (!rows.length) return;
+    event.preventDefault();
+    selectedIds.clear();
+    rows.forEach(row => selectedIds.add(row.dataset.id));
+    refreshSelection();
+  }
+});
+
+selectList.addEventListener('click', event => {
+  event.stopPropagation();
+  openMenu(selectList, bulkListItems);
+});
+
+function bulkListItems() {
+  const ids = [...selectedIds];
+  const items = [menuLabel('Add ' + ids.length + (ids.length === 1 ? ' assessment' : ' assessments') + ' to')];
+  for (const list of readLists().filter(item => item.id !== importsId)) {
+    const item = menuItem('', () => {
+      let skipped = false;
+      updateList(list.id, own => {
+        for (const id of ids) {
+          if (own.ids.includes(id)) continue;
+          if (own.ids.length >= savedLimit) skipped = true;
+          else own.ids.push(id);
+        }
+      });
+      ids.forEach(markRows);
+      check.textContent = '✓';
+      items[0].textContent = skipped ? 'That list is full (' + savedLimit + ')' : 'Added to ' + list.name;
+    });
+    const check = document.createElement('span');
+    check.className = 'menu-check';
+    check.textContent = ids.every(id => list.ids.includes(id)) ? '✓' : '';
+    item.append(check, list.name);
+    items.push(item);
+  }
+  items.push(menuItem('+ New list', () => showMenuItems(newListItems(ids))));
+  return items;
+}
+
+selectShare.addEventListener('click', async () => {
+  const ids = [...selectedIds];
+  const course = !bankView.hidden ? coursePage()?.course : '';
+  const own = bankView.hidden ? readLists().find(list => list.id === listRoute().id) : undefined;
+  const name = course ? courseLabel(course) : own?.name || 'Shared assessments';
+  const result = await shareUrl(location.origin + '/#list=' + ids.join(',') + '&name=' + encodeURIComponent(name), name);
+  if (result === 'cancelled') return;
+  selectShare.textContent = result === 'failed' ? 'Copy failed' : result === 'shared' ? 'Shared' : 'Link copied';
+  setTimeout(() => { selectShare.textContent = 'Share'; }, 1800);
+});
+
+selectZip.addEventListener('click', () => {
+  const exams = selectedExams();
+  const status = !converterView.hidden ? converterStatus : bankView.hidden ? listsStatus : bankStatus;
+  zipExams(selectZip, exams, 'blank-assessments.zip', text => { status.textContent = text; }, () => 'Download');
+});
+
+// A shared address such as /MATH137 or /e/<id> opens the same page as the # address does.
+function openSharedPath() {
+  const course = /^\/([A-Za-z]{2,8}\d{3}[A-Za-z]?)$/.exec(location.pathname);
+  const exam = /^\/e\/([a-f0-9-]{36})$/.exec(location.pathname);
+  if (course) {
+    history.replaceState(null, '', '/#exam-bank/' + course[1].toUpperCase());
+    return;
+  }
+  if (!exam) return;
+  return bankFetch('exams?ids=' + exam[1])
+    .then(response => response.json())
+    .then(({ exams }) => {
+      const found = exams[0];
+      history.replaceState(null, '', found?.course ? '/#exam-bank/' + found.course + '/' + found.id : '/#exam-bank');
+    })
+    .catch(() => history.replaceState(null, '', '/#exam-bank'));
+}
+const sharedPath = openSharedPath();
+if (sharedPath) sharedPath.finally(applyBankRoute);
+else applyBankRoute();

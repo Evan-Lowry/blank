@@ -9,6 +9,8 @@ function allowedWriteOrigin(request, url) {
 const scorePath = /^\/score\/([a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})\/?$/i;
 const privateHeaders = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
 
+const escapeHtml = text => String(text).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+
 class ExportError extends Error {
   constructor(status, message, headers = {}) {
     super(message);
@@ -210,11 +212,22 @@ async function handleRequest(request, env) {
       'X-Content-Type-Options': 'nosniff',
     } });
   }
-  if (pathname === '/' && request.method === 'GET') {
+  const sharePath = /^\/(?:e\/[a-f0-9-]{36}|[A-Za-z]{2,8}\d{3}[A-Za-z]?)$/.test(pathname);
+  if ((pathname === '/' || sharePath) && request.method === 'GET') {
     // The Turnstile site key is public config. The challenge host is only allowed by the page's CSP when a key is set.
     const siteKey = turnstileSiteKey(env);
     const challenge = siteKey ? ' https://challenges.cloudflare.com' : '';
-    return new Response(siteKey ? HTML.replace('name="turnstile-site-key" content=""', 'name="turnstile-site-key" content="' + siteKey + '"') : HTML, { headers: {
+    let page = siteKey ? HTML.replace('name="turnstile-site-key" content=""', 'name="turnstile-site-key" content="' + siteKey + '"') : HTML;
+    const meta = sharePath ? await sharePageMeta(pathname, env) : undefined;
+    if (meta) {
+      const title = escapeHtml(meta.title + ' · blank.');
+      const description = escapeHtml(meta.description);
+      page = page
+        .replace(/<title>[^<]*<\/title>/, '<title>' + title + '</title>')
+        .replace(/<meta name="description" content="[^"]*">/, '<meta name="description" content="' + description + '">')
+        .replace('</head>', '<meta property="og:type" content="website"><meta property="og:site_name" content="blank."><meta property="og:title" content="' + title + '"><meta property="og:description" content="' + description + '"><meta property="og:url" content="' + escapeHtml(url.origin + pathname) + '"><meta name="twitter:card" content="summary"></head>');
+    }
+    return new Response(page, { headers: {
       'Content-Type': 'text/html; charset=utf-8',
       'Referrer-Policy': 'no-referrer',
       'Content-Security-Policy': "default-src 'none'; script-src 'self' 'unsafe-inline'" + challenge + "; worker-src 'self'; frame-src 'self' blob:" + challenge + "; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self' https://app.crowdmark.com" + challenge + "; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
