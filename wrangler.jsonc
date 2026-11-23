@@ -24,7 +24,7 @@
     "MAX_DAILY_PUBLISHES": "300",
     "MAX_DAILY_SYNC_PROFILES": "500",
     // Per-IP limits per hour for the public write endpoints (0 turns one off). See DEPLOY.md.
-    "RATE_EXPORT_PER_HOUR": "20",
+    "RATE_EXPORT_PER_HOUR": "60",
     "RATE_REPORT_PER_HOUR": "10",
     "RATE_SYNC_CREATE_PER_HOUR": "5",
     // Cloudflare Turnstile is OFF while this is empty (no widget, no check). To turn it on, see DEPLOY.md: put the public site key here and set the Worker secret TURNSTILE_SECRET.

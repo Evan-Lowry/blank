@@ -1230,7 +1230,7 @@ function prefillConverter() {
   fields.replaceChildren();
   for (const link of new Set([...existing, ...links])) addField(link);
   status.classList.remove('error');
-  status.textContent = '';
+  status.textContent = links.length > 1 ? links.length + ' assessments ready. Press Prepare PDF to add them.' : '';
   prepare.focus();
 }
 
@@ -1244,9 +1244,31 @@ document.addEventListener('paste', event => {
 });
 
 // The bookmark opens this page with the Crowdmark link in the address after the #, which is never sent to a server.
-document.querySelector('#bookmarklet').href = 'javascript:(function(){var u=location.href;' +
-  'if(!/^https:\\/\\/app\\.crowdmark\\.com\\/score\\/[0-9a-f-]{36}/i.test(u)){alert("Open your shareable Crowdmark results link first, then click this again.");return;}' +
-  'window.open(' + JSON.stringify(location.origin + location.pathname + '#convert=') + '+encodeURIComponent(u),"_blank");})();';
+// On a results link it sends that one link. Inside your Crowdmark courses it asks Crowdmark (as you, from your own
+// signed-in tab) for your assignments and sends the links for the course you are viewing, or for all of them.
+function crowdmarkBookmarklet() {
+  var site = '__SITE__';
+  var send = function (links) { window.open(site + encodeURIComponent(links.join(' ')), '_blank'); };
+  var score = location.href.match(/^https:\/\/app\.crowdmark\.com\/score\/[0-9a-f-]{36}/i);
+  if (score) return send([score[0]]);
+  var course = location.origin === 'https://app.crowdmark.com' && (location.pathname.match(/^\/student\/courses\/([^\/]+)/) || [])[1];
+  if (!course) {
+    alert('Open one of your Crowdmark courses or a shareable results link first, then click this again.');
+    return;
+  }
+  fetch('/api/v2/student/assignments?include[]=course', { credentials: 'include' })
+    .then(function (response) { return response.json(); })
+    .then(function (result) {
+      var links = result.data
+        .filter(function (a) { return a.attributes['score-uuid'] && a.relationships.course.data.id === course; })
+        .map(function (a) { return 'https://app.crowdmark.com/score/' + a.attributes['score-uuid']; });
+      if (links.length) send(links);
+      else alert('No assessments found here.');
+    })
+    .catch(function () { alert('Could not read your Crowdmark assessments. Make sure you are signed in.'); });
+}
+document.querySelector('#bookmarklet').href = 'javascript:(' +
+  crowdmarkBookmarklet.toString().replace('__SITE__', location.origin + location.pathname + '#convert=').replace(/\s*\n\s*/g, ' ') + ')()';
 
 bankAssessment.addEventListener('change', () => {
   const page = coursePage();

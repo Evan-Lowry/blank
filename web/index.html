@@ -189,7 +189,7 @@
 
   /* viewer */
   .turnstile-holder { position: fixed; right: 1rem; bottom: 1rem; z-index: 40; }
-  .viewer { position: sticky; top: 1rem; display: flex; flex-direction: column; height: calc(100dvh - 9.25rem); min-height: 22rem; padding: .5rem; }
+  .viewer { position: sticky; top: 1rem; display: flex; flex-direction: column; height: calc(100dvh - 2rem); min-height: 22rem; padding: .5rem; }
   .viewer-frame { width: 100%; flex: 1; min-height: 0; display: block; border: 0; border-radius: .4rem; background: var(--field); }
   .viewer-message { margin: .5rem; color: var(--muted); font-size: .9rem; }
   #preview-back { display: none; }
@@ -353,7 +353,7 @@
       <p><strong>By using this site, you agree that you have permission to share every assessment you convert, and that sharing it doesn't break any course, instructor, or university policy.</strong></p>
       <p>If something in the bank shouldn't be there, or looks wrong, use the ⋯ menu on its row and choose Report a problem.</p>
       <h2 class="prose-title">Convert from Crowdmark in one click</h2>
-      <p>Drag this button to your bookmarks bar. Open your shareable Crowdmark results link, click the bookmark, and blank. opens with the link filled in. You still press Prepare PDF to confirm, since converting adds the blank copy to the public bank.</p>
+      <p>Drag this button to your bookmarks bar. Open one of your courses in Crowdmark, or a shareable results link, and click the bookmark. blank. opens with every assessment from that course (or the single link) filled in. It reads your list from Crowdmark in your own browser, and nothing is sent to blank. until you press Prepare PDF, which adds the blank copies to the public bank.</p>
       <p><a class="bookmarklet" id="bookmarklet" href="#about">Get blank copy</a></p>
       <p>Your lists are saved in your browser. If you turn on sync, your list names and the assessments in them are also saved on the server under a private code, and nothing else.</p>
       <p>blank. is a student project. It isn't affiliated with or endorsed by the University of Waterloo or Crowdmark. The source is on <a href="https://github.com/Evan-Lowry/blank" target="_blank" rel="noopener noreferrer">GitHub</a>.</p>
@@ -630,6 +630,7 @@
     viewer.hidden = true;
     viewerFrame.removeAttribute('src');
     workspace.classList.remove('split');
+    workspace.style.minHeight = '';
     document.body.classList.remove('pdf-open');
     if (restorePosition) {
       button.focus({ preventScroll: true });
@@ -661,6 +662,7 @@
     viewer.hidden = false;
     workspace.classList.add('split');
     document.body.classList.add('pdf-open');
+    alignViewer();
     if (supported) {
       // Some built-in PDF viewers take focus and scroll the page when they load. Put the page back.
       const scrollTop = window.scrollY;
@@ -670,6 +672,18 @@
     if (matchMedia('(max-width: 50rem)').matches) previewBack.focus({ preventScroll: true });
     else row?.scrollIntoView({ block: 'nearest' });
   }
+
+  // Start the preview level with the filter row on a course page (no offset in the converter).
+  function alignViewer() {
+    const bar = document.querySelector('#bank-toolbar');
+    const wide = !matchMedia('(max-width: 50rem)').matches;
+    const visible = bar && bar.offsetParent !== null;
+    const offset = wide && visible ? Math.max(0, bar.getBoundingClientRect().top - workspace.getBoundingClientRect().top) : 0;
+    viewer.style.marginTop = offset ? offset + 'px' : '';
+    // A sticky pane cannot leave its container, so keep the container tall enough to hold the offset pane.
+    workspace.style.minHeight = offset ? offset + Math.max(innerHeight - 32, 352) + 'px' : '';
+  }
+  addEventListener('resize', () => { if (!viewer.hidden) alignViewer(); });
 
   function addResult(index, link) {
     const card = template.content.firstElementChild.cloneNode(true);
