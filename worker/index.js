@@ -173,6 +173,8 @@ async function exportAssessment(request, env) {
     'X-Assessment-Title': encodeURIComponent(title),
     'X-Bank-Status': entry.status,
     ...(entry.published ? { 'X-Bank-Published': '1' } : {}),
+    // What the page needs to offer Copy link, Add to list and Report on a public entry.
+    ...(entry.published ? { 'X-Bank-Exam': JSON.stringify({ id: entry.id, course: details.course, term: details.term, assessment: details.assessment, assessment_number: details.number || null, page_count: images.length }) } : {}),
     ...(input.nativePreview === true ? { 'X-PDF-Preview': await createPdfPreview(entry.id, filename, env) } : {}),
     'X-Page-Images': JSON.stringify(pageImages),
     'X-Page-Count': String(images.length),

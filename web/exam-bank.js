@@ -392,7 +392,7 @@ function examMenuItems(exam) {
   }
   items.push(menuItem('Add to list…', () => showMenuItems(listPickerItems(exam))));
   const here = openListId();
-  if (here && readLists().find(list => list.id === here)?.ids.includes(exam.id)) {
+  if (here && here !== importsId && readLists().find(list => list.id === here)?.ids.includes(exam.id)) {
     items.push(menuItem('Remove from this list', () => {
       updateList(here, list => { list.ids = list.ids.filter(id => id !== exam.id); });
       closeRowMenu();
@@ -410,7 +410,8 @@ function examMenuItems(exam) {
 // Pick which lists an assessment belongs to. Tick or untick as many as you like.
 function listPickerItems(exam) {
   const items = [menuLabel('Add to list')];
-  for (const list of readLists()) {
+  // My imports fills itself, so it is not offered here.
+  for (const list of readLists().filter(item => item.id !== importsId)) {
     const item = menuItem('', () => {
       const now = toggleInList(list.id, exam.id);
       if (now === null) {
@@ -519,7 +520,11 @@ headerSearch.addEventListener('submit', event => {
     searchedCourse = course;
     goToBankCourse(course);
   }
-  else if (bankMode() !== 'bank') location.hash = 'exam-bank';
+  else if (bankMode() !== 'bank') {
+    // Keep what was typed so the course list opens already filtered by it.
+    carriedSearch = bankCourse.value;
+    location.hash = 'exam-bank';
+  }
 });
 // Pressing the mouse on a suggestion must not take focus out of the box, or the list closes before the click lands.
 courseMatches.addEventListener('mousedown', event => event.preventDefault());
@@ -709,13 +714,27 @@ function cleanLists(value) {
     }));
 }
 
+// "My imports" always exists, comes first, and cannot be renamed or deleted. Every assessment you prepare is added to it.
+const importsId = 'imported';
+const importsName = 'My imports';
+function withImports(lists) {
+  const own = lists.find(list => list.id === importsId);
+  return [{ id: importsId, name: importsName, ids: own ? own.ids : [] }, ...lists.filter(list => list.id !== importsId)].slice(0, maxLists);
+}
+
 function readLists() {
-  if (listsMemory) return listsMemory;
+  if (listsMemory) return withImports(listsMemory);
   try {
-    return cleanLists(JSON.parse(localStorage.getItem(listsKey)));
+    return withImports(cleanLists(JSON.parse(localStorage.getItem(listsKey))));
   } catch {
-    return [];
+    return withImports([]);
   }
+}
+
+function addToImports(id) {
+  updateList(importsId, list => {
+    list.ids = [id, ...list.ids.filter(other => other !== id)].slice(0, savedLimit);
+  });
 }
 
 function storeLists(lists) {
@@ -894,18 +913,33 @@ async function loadLists() {
 function renderIndex() {
   const lists = readLists();
   listsList.replaceChildren();
-  listsStatus.textContent = lists.length ? '' : 'No lists yet. Use ⋯ on any assessment and choose Add to list.';
-  if (!lists.length) return;
-  const table = makeList('lists', 'Your lists', ['Name', 'Assessments', '']);
-  for (const list of lists) {
+  listsStatus.textContent = '';
+  const listRow = list => {
     const row = document.createElement('a');
     row.className = 'list-row';
     row.setAttribute('role', 'row');
     row.href = '#lists/' + list.id;
     row.append(cell(list.name, 'cell-strong'), cell(list.ids.length + (list.ids.length === 1 ? ' assessment' : ' assessments'), 'cell-muted'), cell('›', 'cell-go'));
-    table.append(row);
+    return row;
+  };
+  const mine = lists.filter(list => list.id !== importsId);
+  if (mine.length) {
+    const table = makeList('lists', 'Your lists', ['Name', 'Assessments', '']);
+    for (const list of mine) table.append(listRow(list));
+    listsList.append(table);
+  } else {
+    listsStatus.textContent = 'No lists of your own yet. Use ⋯ on any assessment and choose Add to list.';
   }
-  listsList.append(table);
+  // The automatic list sits apart at the bottom.
+  const auto = lists.find(list => list.id === importsId);
+  if (auto) {
+    const table = document.createElement('div');
+    table.className = 'list lists list-auto';
+    table.setAttribute('role', 'table');
+    table.setAttribute('aria-label', 'Automatic list');
+    table.append(listRow(auto));
+    listsList.append(table);
+  }
 }
 
 function renderList() {
@@ -919,11 +953,11 @@ function renderList() {
   hidePreview();
   listsList.replaceChildren();
   listsShare.hidden = !own || !exams.length;
-  listsMore.hidden = !own;
+  listsMore.hidden = !own || own.id === importsId;
   listsKeep.hidden = !route.shared || !exams.length;
   listsZip.hidden = exams.length < 2;
   listsZip.textContent = 'Download all (' + Math.min(exams.length, savedLimit) + ')';
-  listsStatus.textContent = exams.length ? '' : route.shared ? 'These assessments are no longer in the bank.' : 'Nothing in this list yet. Use ⋯ on any assessment and choose Add to list.';
+  listsStatus.textContent = exams.length ? '' : route.id === importsId ? 'Assessments you prepare on this browser are added here.' : route.shared ? 'These assessments are no longer in the bank.' : 'Nothing in this list yet. Use ⋯ on any assessment and choose Add to list.';
   if (!exams.length) return;
   const table = makeList('saved', 'Assessments in this list', ['Course', 'Term', 'Type', '']);
   for (const exam of exams) table.append(createExamRow(exam, { showCourse: true }));
@@ -983,6 +1017,7 @@ listsMore.addEventListener('click', event => {
         return;
       }
       const id = listRoute().id;
+      writeGone([...readGone(), id]);
       writeLists(readLists().filter(list => list.id !== id));
       closeRowMenu();
       location.hash = 'lists';
@@ -1065,18 +1100,46 @@ async function syncCall(method, code, body) {
 }
 
 // Lists are matched by id. Assessments in either copy are kept, so merging never loses anything.
-// The names from `incoming` win when both sides have the same list.
+// The names from `incoming` win when both sides have the same list. A deleted list is kept as a marker
+// ({ gone: true }) so another device cannot bring it back; a marker on either side wins.
 function mergeLists(base, incoming) {
   const merged = new Map();
   for (const list of [...base, ...incoming]) {
+    if (list.id === importsId && list.gone) continue;
     const have = merged.get(list.id);
-    if (!have) merged.set(list.id, { ...list, ids: [...list.ids] });
+    if (!have) merged.set(list.id, list.gone ? { id: list.id, name: '', ids: [], gone: true } : { ...list, ids: [...list.ids] });
+    else if (list.gone || have.gone) merged.set(list.id, { id: list.id, name: '', ids: [], gone: true });
     else {
       have.name = list.name;
       have.ids = [...new Set([...have.ids, ...list.ids])].slice(0, savedLimit);
     }
   }
-  return [...merged.values()].slice(0, maxLists);
+  const all = [...merged.values()];
+  return [...all.filter(list => !list.gone).slice(0, maxLists), ...all.filter(list => list.gone).slice(-goneLimit)];
+}
+
+// Deleted lists are remembered here so a synced copy cannot restore them.
+const goneKey = 'blank-lists-gone';
+const goneLimit = 100;
+function readGone() {
+  try {
+    const value = JSON.parse(localStorage.getItem(goneKey));
+    return (Array.isArray(value) ? value : []).filter(id => /^[a-z0-9]{4,12}$/.test(id)).slice(-goneLimit);
+  } catch {
+    return [];
+  }
+}
+function writeGone(ids) {
+  try {
+    localStorage.setItem(goneKey, JSON.stringify([...new Set(ids)].slice(-goneLimit)));
+  } catch {
+    // Without storage the marker is lost, which only means a deleted list can return on the next sync.
+  }
+}
+const withGone = lists => [...lists, ...readGone().map(id => ({ id, name: '', ids: [], gone: true }))];
+function storeMerged(all) {
+  writeGone([...readGone(), ...all.filter(list => list.gone).map(list => list.id)]);
+  storeLists(all.filter(list => !list.gone));
 }
 
 const sameLists = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -1101,18 +1164,18 @@ async function syncNow() {
       return;
     }
     if (status !== 200) return;
-    const local = readLists();
+    const local = withGone(readLists());
     const merged = mergeLists(local, data.lists);
     let version = data.version;
     if (!sameLists(merged, local)) {
-      storeLists(merged);
+      storeMerged(merged);
       refreshAfterSync();
     }
     if (!sameLists(merged, data.lists)) {
       ({ status, data } = await syncCall('PUT', code, { lists: merged, baseVersion: version }));
       if (status === 409) {
         const again = mergeLists(data.lists, merged);
-        storeLists(again);
+        storeMerged(again);
         ({ status, data } = await syncCall('PUT', code, { lists: again, baseVersion: data.version }));
         refreshAfterSync();
       }
@@ -1152,7 +1215,7 @@ document.querySelector('#sync-start').addEventListener('click', async () => {
   const button = document.querySelector('#sync-start');
   button.disabled = true;
   try {
-    const { status, data } = await syncCall('POST', '', { lists: readLists() });
+    const { status, data } = await syncCall('POST', '', { lists: withGone(readLists()) });
     if (status !== 201) throw new Error(data.error || 'Sync could not start.');
     saveSync(data.code, data.version);
     renderSyncDialog();
@@ -1175,8 +1238,8 @@ document.querySelector('#sync-join').addEventListener('submit', async event => {
     if (status === 404) throw new Error('That code wasn’t found.');
     if (status !== 200) throw new Error(data.error || 'Couldn’t connect.');
     // Lists already on this device are kept and added to the saved copy.
-    const merged = mergeLists(readLists(), data.lists);
-    storeLists(merged);
+    const merged = mergeLists(withGone(readLists()), data.lists);
+    storeMerged(merged);
     saveSync(code, data.version);
     await syncNow();
     refreshAfterSync();

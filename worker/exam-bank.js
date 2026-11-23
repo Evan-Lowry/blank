@@ -287,14 +287,18 @@ function newSyncCode() {
 
 // Same shape and limits as the lists kept in the browser: up to 20 lists of up to 60 assessments.
 function cleanSyncLists(value) {
-  return (Array.isArray(value) ? value : [])
-    .filter(item => item && /^[a-z0-9]{4,12}$/.test(item.id) && typeof item.name === 'string')
+  const items = (Array.isArray(value) ? value : []).filter(item => item && /^[a-z0-9]{4,12}$/.test(item.id) && typeof item.name === 'string');
+  // A deleted list is kept as a bare marker so other devices cannot bring it back.
+  const gone = items.filter(item => item.gone === true).slice(-100).map(item => ({ id: item.id, name: '', ids: [], gone: true }));
+  const lists = items
+    .filter(item => item.gone !== true)
     .slice(0, 20)
     .map(item => ({
       id: item.id,
       name: item.name.slice(0, 40),
       ids: (Array.isArray(item.ids) ? item.ids : []).filter(id => new RegExp('^' + entryId + '$').test(id)).slice(0, 60),
     }));
+  return [...lists, ...gone];
 }
 
 async function handleSync(request, url, env) {

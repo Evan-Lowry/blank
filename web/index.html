@@ -169,11 +169,15 @@
   .form-buttons { display: flex; flex-wrap: wrap; gap: .6rem; }
   #prepare { flex: 1; }
   .status { margin: .75rem 0 0; color: var(--muted); font-size: .9rem; }
+  .status.tip a { color: inherit; text-decoration: underline; }
+  .status.tip a:hover { color: var(--text); }
   .status:empty { margin: 0; }
   .status.error, .result .details.error { color: var(--error); }
   #export-form { padding-bottom: 1.25rem; border-bottom: 1px solid var(--border); }
-  #batch-actions { margin: 0; padding: .75rem 0 0; align-items: center; }
-  #batch-actions button { min-height: 2rem; padding: .2rem .7rem; font-size: .82rem; }
+  #batch-actions { margin: 0; padding: 1rem 0 0; align-items: center; justify-content: flex-start; gap: .6rem; }
+  #batch-actions button { min-height: 2.5rem; font-size: .9rem; font-weight: 600; }
+  .list.list-auto { margin-top: 2.25rem; }
+  .list-auto .list-row { border-top: 1px solid var(--border); }
   #results { margin-top: 1.25rem; border-top: 1px solid var(--border); }
   #results:empty { display: none; }
   .result { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0 .75rem; padding: .6rem; border-bottom: 1px solid var(--border); }
@@ -185,7 +189,6 @@
   .retry-form { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .5rem; }
   .retry-form input { flex: 1; min-width: 12rem; min-height: 2.25rem; }
   .result.preview-selected { background: var(--selected); box-shadow: inset 3px 0 var(--accent); }
-  .result.preview-selected .download { display: none; }
 
   /* viewer */
   .turnstile-holder { position: fixed; right: 1rem; bottom: 1rem; z-index: 40; }
@@ -233,7 +236,6 @@
   .exam-actions button, .exam-actions .download { min-height: 2.25rem; padding: .2rem .85rem; font-size: .875rem; }
   .exam-actions .more-button { padding-inline: .6rem; }
   .list-row.preview-selected { background: var(--selected); box-shadow: inset 3px 0 var(--accent); }
-  .list-row.preview-selected .download { display: none; }
   @container (max-width: 40rem) {
     .list-head { display: none; }
     .courses .list-row, .lists .list-row { grid-template-columns: minmax(0, 1fr) auto auto; }
@@ -325,9 +327,10 @@
         </div>
       </div>
       <p class="status" id="status" role="status"></p>
+      <p class="status tip">Have a whole course? Paste several links at once, or <a href="#about">import a course in one click</a>.</p>
     </form>
     <div class="actions" id="batch-actions" hidden>
-      <button id="download-all" type="button">Download all</button>
+      <button class="secondary" id="download-all" type="button">Download all</button>
       <p class="status" id="archive-status" role="status"></p>
     </div>
     <div id="results"></div>
@@ -444,6 +447,7 @@
     <div class="actions" hidden>
       <button type="button" class="secondary" aria-expanded="false" aria-controls="viewer" hidden>Preview</button>
       <button type="button" class="download" hidden>Download</button>
+      <button type="button" class="secondary more-button" aria-label="More actions" aria-haspopup="menu" aria-expanded="false" hidden><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><circle cx="3" cy="8" r="1.4"/><circle cx="8" cy="8" r="1.4"/><circle cx="13" cy="8" r="1.4"/></svg></button>
     </div>
   </section>
 </template>
@@ -510,6 +514,7 @@
   const viewerMessage = document.querySelector('#viewer-message');
   const objectUrls = new Set();
   let batchRows = [];
+  const importedLinks = new Set();
   let activePreview;
   let previewScroll;
 
@@ -615,7 +620,7 @@
     } finally {
       if (rows === batchRows) {
         downloadAll.disabled = false;
-        downloadAll.textContent = 'Download all';
+        downloadAll.textContent = downloadAllLabel();
       }
     }
   });
@@ -704,10 +709,11 @@
     card.setAttribute('aria-labelledby', title.id);
     details.textContent = 'Waiting…';
     results.append(card);
-    const row = { card, title, details, actions, previewButton, download, retryGroup, retry };
+    const row = { card, title, details, actions, previewButton, download, more: actions.querySelector('.more-button'), retryGroup, retry };
     retry.addEventListener('click', async () => {
       const corrected = retryLink.value.trim();
       if (await prepareAssessment(corrected, row)) {
+        importedLinks.add(corrected);
         if (originalField?.value.trim() === link) originalField.value = corrected;
         summarizeBatch();
       }
@@ -808,6 +814,20 @@
       row.previewButton.addEventListener('click', row.openPreview);
       row.download.hidden = false;
       row.download.addEventListener('click', () => downloadFile(url, filename));
+      // Public entries get the same menu as the assessment list: Copy link, Add to list, Report a problem.
+      try {
+        const exam = published ? JSON.parse(response.headers.get('X-Bank-Exam')) : undefined;
+        if (exam?.id) {
+          addToImports(exam.id);
+          row.more.hidden = false;
+          row.more.addEventListener('click', event => {
+            event.stopPropagation();
+            openRowMenu(row.more, exam);
+          });
+        }
+      } catch {
+        // Without the details the menu is simply not offered.
+      }
       row.retryGroup.hidden = true;
       row.actions.hidden = false;
       return true;
@@ -821,12 +841,16 @@
     }
   }
 
+  const downloadAllLabel = () => 'Download all (' + batchRows.filter(row => row.file).length + ')';
+
   function summarizeBatch() {
     if (prepare.disabled || results.childElementCount < 2) return;
     const total = results.childElementCount;
     const found = batchRows.filter(row => row.file).length;
     batchActions.hidden = found < 2;
-    status.textContent = found + ' of ' + total + ' assessments found.';
+    downloadAll.textContent = downloadAllLabel();
+    // Say something only when some links did not work; a clean run needs no message.
+    status.textContent = found < total ? found + ' of ' + total + ' assessments found.' : '';
   }
 
   form.addEventListener('submit', async (event) => {
@@ -840,14 +864,18 @@
       return;
     }
 
-    hidePreview();
-    results.replaceChildren();
-    for (const url of objectUrls) URL.revokeObjectURL(url);
-    objectUrls.clear();
-    const rows = batchRows = links.map((link, index) => addResult(index, link));
+    // Earlier results stay on the page; only links that are not already added are prepared.
+    const fresh = links.filter(link => !importedLinks.has(link));
+    if (!fresh.length) {
+      status.classList.add('error');
+      status.textContent = links.length === 1 ? 'That link is already added below.' : 'Those links are already added below.';
+      return;
+    }
+    const rows = fresh.map(link => addResult(results.childElementCount, link));
+    batchRows = [...batchRows, ...rows];
     batchActions.hidden = true;
     downloadAll.disabled = false;
-    downloadAll.textContent = 'Download all';
+    downloadAll.textContent = downloadAllLabel();
     archiveStatus.textContent = '';
     prepare.disabled = true;
     prepare.textContent = 'Preparing…';
@@ -855,23 +883,22 @@
 
     let next = 0;
     async function runQueue() {
-      while (next < links.length) {
+      while (next < fresh.length) {
         const index = next++;
-        await prepareAssessment(links[index], rows[index]);
+        await prepareAssessment(fresh[index], rows[index]);
       }
     }
-    await Promise.all(Array.from({ length: Math.min(3, links.length) }, runQueue));
+    await Promise.all(Array.from({ length: Math.min(3, fresh.length) }, runQueue));
 
     prepare.disabled = false;
     prepare.textContent = 'Prepare PDF';
+    fresh.forEach((link, index) => { if (rows[index].file) importedLinks.add(link); });
     summarizeBatch();
-    if (!converterView.hidden && !activePreview) rows.find(row => row.openPreview)?.openPreview();
-  });
-
-  fields.addEventListener('input', () => {
-    if (!status.classList.contains('error')) return;
-    status.textContent = '';
-    status.classList.remove('error');
+    // The links are imported, so clear the boxes for the next ones. Failed rows keep their own retry field.
+    if (rows.some(row => row.file)) {
+      fields.replaceChildren();
+      addField();
+    }
   });
 </script>
 <script>
