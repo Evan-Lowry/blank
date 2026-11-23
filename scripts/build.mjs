@@ -12,8 +12,6 @@ const js = 'text/javascript; charset=utf-8';
 const assets = {
   '/pdfjs.mjs': [js, await read('node_modules/pdfjs-dist/build/pdf.min.mjs')],
   '/pdfjs-worker.mjs': [js, await read('node_modules/pdfjs-dist/build/pdf.worker.min.mjs')],
-  '/pdf-viewer.mjs': [js, await read('node_modules/pdfjs-dist/web/pdf_viewer.mjs')],
-  '/pdf-viewer.css': ['text/css; charset=utf-8', await read('node_modules/pdfjs-dist/web/pdf_viewer.css')],
   '/favicon.svg': ['image/svg+xml', await read('web/favicon.svg')],
 };
 let html = template.replace('<!-- exam-bank-script -->', () => '<script>\n' + bankScript + '\n</script>');

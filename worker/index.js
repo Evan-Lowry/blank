@@ -7,7 +7,7 @@ const pagesHeaders = {
   'Access-Control-Allow-Origin': githubPagesOrigin,
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
-  'Access-Control-Expose-Headers': 'Content-Disposition, X-Assessment-Title, X-Bank-Status, X-Page-Count, X-First-Page, X-Last-Page',
+  'Access-Control-Expose-Headers': 'Content-Disposition, X-Assessment-Title, X-Bank-Status, X-PDF-Preview, X-Page-Count, X-First-Page, X-Last-Page',
   'Vary': 'Origin',
 };
 
@@ -163,7 +163,7 @@ async function exportAssessment(request, env) {
   }
   const details = detectFromLabel(booklet);
   const rendered = makePdf(images);
-  const bankStatus = await savePendingExam(details, rendered, env);
+  const pending = await savePendingExam(details, rendered, env);
   const { pdf, pageImages } = rendered;
   const term = details.term && { W: 'Winter', S: 'Spring', F: 'Fall' }[details.term.at(-1)] + ' ' + details.term.slice(0, 4);
   const course = details.course.replace(/([A-Z]+)(\d)/, '$1 $2');
@@ -174,7 +174,8 @@ async function exportAssessment(request, env) {
     'Content-Type': 'application/pdf',
     'Content-Disposition': 'attachment; filename="' + filename + '"',
     'X-Assessment-Title': encodeURIComponent(title),
-    'X-Bank-Status': bankStatus,
+    'X-Bank-Status': pending.status,
+    ...(input.nativePreview === true ? { 'X-PDF-Preview': await createPdfPreview(pending.id, filename, env) } : {}),
     'X-Page-Images': JSON.stringify(pageImages),
     'X-Page-Count': String(images.length),
     'X-First-Page': String(ordered[0][0]),

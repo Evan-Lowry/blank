@@ -161,15 +161,16 @@ async function submitExam(request, env) {
     return bankError('One or more pages could not be converted to a blank PDF.', 422);
   }
 
-  const status = await savePendingExam(details, rendered, env);
+  const { status } = await savePendingExam(details, rendered, env);
   return bankJson({ status }, status === 'pending' ? 201 : 200);
 }
 
 async function savePendingExam(details, rendered, env) {
   const bytes = await rendered.pdf.arrayBuffer();
   const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), byte => byte.toString(16).padStart(2, '0')).join('');
-  const existing = await env.DB.prepare('SELECT status FROM exam_bank WHERE content_hash = ?').bind(hash).first();
-  if (existing) return 'duplicate';
+  const matchingExam = env.DB.prepare('SELECT id FROM exam_bank WHERE content_hash = ?').bind(hash);
+  const existing = await matchingExam.first();
+  if (existing) return { id: existing.id, status: 'duplicate' };
 
   const id = crypto.randomUUID();
   const key = 'exams/' + id + '.pdf';
@@ -180,13 +181,42 @@ async function savePendingExam(details, rendered, env) {
       'VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(content_hash) DO NOTHING'
     ).bind(id, details.course, details.term, details.assessment, details.number ? Number(details.number) : null,
       rendered.pageImages.length, JSON.stringify(rendered.pageImages), hash).run();
-    if (result.meta.changes) return 'pending';
+    if (result.meta.changes) return { id, status: 'pending' };
   } catch (error) {
     await env.BUCKET.delete(key);
     throw error;
   }
   await env.BUCKET.delete(key);
-  return 'duplicate';
+  const winner = await matchingExam.first();
+  return { id: winner.id, status: 'duplicate' };
+}
+
+async function createPdfPreview(id, filename, env) {
+  const now = Math.floor(Date.now() / 1000);
+  const token = crypto.randomUUID();
+  await env.DB.prepare('DELETE FROM pdf_previews WHERE expires_at <= ?').bind(now).run();
+  await env.DB.prepare('INSERT INTO pdf_previews (token, exam_id, filename, expires_at) VALUES (?, ?, ?, ?)')
+    .bind(token, id, filename, now + 2 * 60 * 60).run();
+  return '/api/bank/preview/' + token + '.pdf';
+}
+
+async function readStoredPdf(id, filename, inline, headers, env) {
+  const object = await env.BUCKET.get('exams/' + id + '.pdf');
+  if (!object) return bankError('PDF not found.', 404);
+  return new Response(object.body, { headers: {
+    ...bankHeaders,
+    ...headers,
+    ...(Number.isSafeInteger(object.size) ? { 'Content-Length': String(object.size) } : {}),
+    'Content-Type': 'application/pdf',
+    'Content-Disposition': (inline ? 'inline' : 'attachment') + '; filename="' + filename + '"',
+  } });
+}
+
+async function getPdfPreview(token, env) {
+  const preview = await env.DB.prepare('SELECT exam_id, filename FROM pdf_previews WHERE token = ? AND expires_at > ?')
+    .bind(token, Math.floor(Date.now() / 1000)).first();
+  if (!preview) return bankError('PDF preview expired. Prepare the PDF again.', 404);
+  return readStoredPdf(preview.exam_id, preview.filename, true, { 'Referrer-Policy': 'no-referrer' }, env);
 }
 
 const bankFields = 'id, course, term, assessment, assessment_number, page_count';
@@ -224,16 +254,11 @@ async function getBankPdf(id, editor, inline, env) {
   if (!entry || (entry.status !== 'approved' && !(editor && entry.status === 'pending'))) {
     return bankError('Exam not found.', 404);
   }
-  const object = await env.BUCKET.get('exams/' + id + '.pdf');
-  if (!object) return bankError('PDF not found.', 404);
   const filename = ([entry.course, entry.term, entry.assessment, entry.assessment_number].filter(Boolean).join('-') || 'pending-blank-assessment') + '.pdf';
-  return new Response(object.body, { headers: {
-    ...bankHeaders,
-    'Content-Type': 'application/pdf',
-    'Content-Disposition': (inline ? 'inline' : 'attachment') + '; filename="' + filename + '"',
+  return readStoredPdf(id, filename, inline, {
     'X-Page-Images': entry.page_images,
     'X-Page-Count': String(entry.page_count),
-  } });
+  }, env);
 }
 
 async function handleExamBank(request, url, env) {
@@ -250,6 +275,8 @@ async function handleExamBank(request, url, env) {
 
   if (path === '/api/bank/exams' && mode === 'GET') return listExams(url, env);
   if (path === '/api/bank/submissions' && mode === 'POST') return submitExam(request, env);
+  const preview = new RegExp('^/api/bank/preview/(' + entryId + ')\\.pdf$').exec(path);
+  if (preview && mode === 'GET') return getPdfPreview(preview[1], env);
   const pdfMatch = new RegExp('^/api/bank/pdf/(' + entryId + ')$').exec(path);
   if (pdfMatch && mode === 'GET') return getBankPdf(pdfMatch[1], editor, url.searchParams.get('view') === '1', env);
   if (path === '/api/bank/review' && mode === 'GET') {

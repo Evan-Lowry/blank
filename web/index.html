@@ -7,7 +7,6 @@
 <title>Clean Copy · Crowdmark PDF Export</title>
 <meta name="clean-copy-api" content="">
 <link rel="icon" href="./favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="./pdf-viewer.css">
 <style>
   :root {
     color-scheme: dark;
@@ -120,13 +119,10 @@
     position: sticky;
     top: 1rem;
   }
-  .viewer-toolbar { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:.5rem; margin-bottom:.65rem; }
-  .viewer-tools { display:flex; flex-wrap:wrap; align-items:center; gap:.3rem; }
-  .viewer-toolbar a, .viewer-toolbar button { min-height:2.5rem; font-size:.875rem; padding:.38rem .65rem; }
-  .viewer-count { color:var(--muted); font-variant-numeric:tabular-nums; font-size:.875rem; padding-inline:.25rem; }
-  .viewer-frame, .standard-frame { width:100%; height:70vh; display:block; border:1px solid var(--border); background:var(--field); }
-  .standard-frame { position:relative; }
-  .pdf-scroll { position:absolute; inset:0; overflow:auto; }
+  .viewer-toolbar { display:flex; justify-content:flex-end; align-items:center; flex-wrap:wrap; gap:.5rem; }
+  .viewer-toolbar button { min-height:2.5rem; font-size:.875rem; padding:.38rem .65rem; }
+  .viewer-toolbar:has(button:not([hidden]):not(#preview-back)) { margin-bottom:.65rem; }
+  .viewer-frame { width:100%; height:70vh; display:block; border:1px solid var(--border); background:var(--field); }
   .viewer-message { margin:.25rem 0; color:var(--muted); font-size:.875rem; }
   .preview-selected { background:#282828; }
   .preview-selected .actions > .download, .preview-selected .bank-actions > .download { display:none; }
@@ -199,9 +195,9 @@
   @media (max-width: 50rem) {
     .workspace.split { display: grid; width: min(100%, 38rem); grid-template-columns: minmax(0, 1fr); }
     .viewer { position:fixed; inset:0; z-index:5; display:flex; flex-direction:column; background:var(--background); }
-    .viewer-toolbar { justify-content:space-between; }
     #preview-back { display:inline-flex; }
-    .viewer-frame, .standard-frame { min-height:0; height:auto; flex:1; }
+    .viewer-toolbar { justify-content:space-between; margin-bottom:.65rem; }
+    .viewer-frame { min-height:0; height:auto; flex:1; }
     body.pdf-open { overflow:hidden; }
   }
   @media (max-width: 30rem) {
@@ -265,28 +261,11 @@
   </div>
   <section class="panel viewer" id="viewer" aria-label="PDF preview" hidden>
     <div class="viewer-toolbar">
-      <div class="viewer-tools">
-        <button class="secondary" type="button" id="preview-back">Back</button>
-        <div class="viewer-tools" id="standard-tools" hidden>
-          <button class="secondary" type="button" id="previous-page" aria-label="Previous page">‹</button>
-          <span class="viewer-count" id="page-count" role="status"></span>
-          <button class="secondary" type="button" id="next-page" aria-label="Next page">›</button>
-          <button class="secondary" type="button" id="zoom-out" aria-label="Zoom out">−</button>
-          <button class="secondary" type="button" id="zoom-fit">Fit width</button>
-          <button class="secondary" type="button" id="zoom-in" aria-label="Zoom in">+</button>
-        </div>
-      </div>
-      <div class="viewer-tools">
-        <a class="download secondary" id="preview-open" target="_blank" rel="noopener noreferrer" hidden>Open in browser</a>
-        <button class="secondary" id="preview-fallback" type="button" hidden>Use alternate viewer</button>
-        <button id="preview-download" type="button" hidden>Download PDF</button>
-      </div>
+      <button class="secondary" type="button" id="preview-back">Back</button>
+      <button id="preview-download" type="button" hidden>Download PDF</button>
     </div>
     <p class="viewer-message" id="viewer-message" role="status" hidden></p>
-    <iframe id="viewer-frame" class="viewer-frame" title="PDF preview" hidden></iframe>
-    <div id="standard-frame" class="standard-frame" hidden>
-      <div id="pdf-scroll" class="pdf-scroll" tabindex="0" aria-label="PDF pages"><div class="pdfViewer"></div></div>
-    </div>
+    <iframe id="viewer-frame" class="viewer-frame" title="PDF preview" referrerpolicy="no-referrer" hidden></iframe>
   </section>
 </div>
 </main>
@@ -338,72 +317,13 @@
   const workspace = document.querySelector('#workspace');
   const viewer = document.querySelector('#viewer');
   const viewerFrame = document.querySelector('#viewer-frame');
-  const previewOpen = document.querySelector('#preview-open');
-  const previewFallback = document.querySelector('#preview-fallback');
   const previewBack = document.querySelector('#preview-back');
   const previewDownload = document.querySelector('#preview-download');
   const viewerMessage = document.querySelector('#viewer-message');
-  const standardFrame = document.querySelector('#standard-frame');
-  const standardTools = document.querySelector('#standard-tools');
-  const pageCount = document.querySelector('#page-count');
-  const viewport = document.querySelector('#pdf-scroll');
-  const previous = document.querySelector('#previous-page');
-  const next = document.querySelector('#next-page');
   const objectUrls = new Set();
   let activePreview;
   let previewScroll;
   let currentPdf;
-  let viewerSequence = 0;
-  let pdfViewer;
-  let pdfTask;
-
-  function syncViewerPage(page, count) {
-    pageCount.textContent = page + ' / ' + count;
-    previous.disabled = page <= 1;
-    next.disabled = page >= count;
-  }
-
-  async function showStandardPdf(source, sequence) {
-    viewerMessage.textContent = 'Loading PDF…';
-    viewerMessage.hidden = false;
-    try {
-      const pdfjs = await import('./pdfjs.mjs');
-      const components = await import('./pdf-viewer.mjs');
-      const data = source.blob ? new Uint8Array(await source.blob.arrayBuffer()) : undefined;
-      if (viewerSequence !== sequence) return;
-      pdfjs.GlobalWorkerOptions.workerSrc = new URL('./pdfjs-worker.mjs', location.href).href;
-      if (!pdfViewer) {
-        const eventBus = new components.EventBus();
-        pdfViewer = new components.PDFViewer({
-          container: viewport, eventBus, annotationMode: 0, textLayerMode: 0,
-        });
-        eventBus.on('pagesinit', () => {
-          pdfViewer.currentScaleValue = 'page-width';
-          syncViewerPage(1, pdfViewer.pagesCount);
-        });
-        eventBus.on('pagechanging', ({ pageNumber }) => syncViewerPage(pageNumber, pdfViewer.pagesCount));
-      }
-      const task = pdfjs.getDocument({
-        ...(data ? { data } : { url: source.inlineUrl }),
-        isEvalSupported: false, useWasm: false, enableXfa: false,
-      });
-      pdfTask = task;
-      const document = await task.promise;
-      if (viewerSequence !== sequence) return;
-      viewport.scrollTop = 0;
-      pdfViewer.setDocument(document);
-      standardTools.hidden = false;
-      viewerMessage.hidden = true;
-    } catch {
-      if (viewerSequence === sequence) viewerMessage.textContent = 'The PDF preview could not load. Close it and try again.';
-    }
-  }
-
-  previous.addEventListener('click', () => pdfViewer.previousPage());
-  next.addEventListener('click', () => pdfViewer.nextPage());
-  document.querySelector('#zoom-out').addEventListener('click', () => pdfViewer.decreaseScale());
-  document.querySelector('#zoom-in').addEventListener('click', () => pdfViewer.increaseScale());
-  document.querySelector('#zoom-fit').addEventListener('click', () => { pdfViewer.currentScaleValue = 'page-width'; });
   previewDownload.addEventListener('click', () => currentPdf?.download?.());
 
   function updateLinkLabels() {
@@ -470,16 +390,11 @@
     const button = activePreview;
     activePreview = undefined;
     currentPdf = undefined;
-    viewerSequence++;
-    pdfViewer?.setDocument(null);
-    pdfTask?.destroy().catch(() => {});
-    pdfTask = undefined;
     button.setAttribute('aria-expanded', 'false');
     button.textContent = 'Preview PDF';
     button.closest('article, section')?.classList.remove('preview-selected');
     viewer.hidden = true;
     viewerFrame.removeAttribute('src');
-    previewOpen.removeAttribute('href');
     workspace.classList.remove('split');
     document.body.classList.remove('pdf-open');
     if (restorePosition) {
@@ -489,13 +404,6 @@
   }
 
   previewBack.addEventListener('click', () => hidePreview(true));
-  previewFallback.addEventListener('click', () => {
-    viewerFrame.removeAttribute('src');
-    viewerFrame.hidden = true;
-    previewFallback.hidden = true;
-    standardFrame.hidden = false;
-    showStandardPdf(currentPdf, ++viewerSequence);
-  });
   viewer.addEventListener('keydown', event => {
     if (event.key === 'Escape') hidePreview(true);
   });
@@ -513,23 +421,15 @@
     button.textContent = 'Hide preview';
     const row = button.closest('article, section');
     row?.classList.add('preview-selected');
-    previewOpen.hidden = !source.inlineUrl;
-    if (source.inlineUrl) previewOpen.href = source.inlineUrl;
     previewDownload.hidden = !source.download;
-    // Safari can report PDF support while leaving an embedded PDF blank.
-    const native = source.inlineUrl && navigator.pdfViewerEnabled &&
-      navigator.vendor !== 'Apple Computer, Inc.' &&
-      !/CodexBrowser\b/i.test(navigator.userAgent);
-    viewerFrame.hidden = !native;
-    previewFallback.hidden = !native;
-    standardFrame.hidden = !!native;
-    standardTools.hidden = true;
-    viewerMessage.hidden = true;
+    const supported = navigator.pdfViewerEnabled !== false;
+    viewerFrame.hidden = !supported;
+    viewerMessage.hidden = supported;
+    viewerMessage.textContent = supported ? '' : 'This browser cannot display PDFs in the page.';
     viewer.hidden = false;
     workspace.classList.add('split');
     document.body.classList.add('pdf-open');
-    if (native) viewerFrame.src = source.inlineUrl;
-    else showStandardPdf(source, ++viewerSequence);
+    if (supported) viewerFrame.src = source.inlineUrl;
     if (matchMedia('(max-width: 50rem)').matches) previewBack.focus({ preventScroll: true });
     else row?.scrollIntoView({ block: 'nearest' });
   }
@@ -617,7 +517,7 @@
     const response = await fetch(apiBase + '/api/export', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ link, template, submitForReview: true }),
+      body: JSON.stringify({ link, template, submitForReview: true, nativePreview: true }),
       signal: AbortSignal.timeout(60000),
     });
     if (!response.ok) {
@@ -640,6 +540,8 @@
       const count = Number(response.headers.get('X-Page-Count'));
       const filename = /filename="([^"]+)"/.exec(response.headers.get('Content-Disposition') || '')?.[1] || 'crowdmark-assessment.pdf';
       const bankStatus = response.headers.get('X-Bank-Status');
+      const previewPath = response.headers.get('X-PDF-Preview');
+      if (!previewPath) throw new Error('The export service did not return a PDF preview. Try again.');
       const pdf = await response.blob();
       if (!row.card.isConnected) return false;
       const url = objectUrl(pdf);
@@ -653,7 +555,7 @@
       row.details.textContent = count + (count === 1 ? ' blank page' : ' blank pages') +
         (first > 1 ? ' · Booklet pages ' + (first === last ? first : first + '–' + last) : '') +
         (bankStatus === 'duplicate' ? ' · Already submitted' : ' · Submitted for review');
-      row.openPreview = () => showPdf(row.previewButton, { blob: pdf, inlineUrl: url, download });
+      row.openPreview = () => showPdf(row.previewButton, { inlineUrl: apiBase + previewPath, download });
       row.previewButton.hidden = false;
       row.previewButton.addEventListener('click', row.openPreview);
       row.download.hidden = false;
