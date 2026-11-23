@@ -163,7 +163,7 @@ async function exportAssessment(request, env) {
   }
   const details = detectFromLabel(booklet);
   const rendered = makePdf(images);
-  const pending = await savePendingExam(details, rendered, env);
+  const entry = await saveExam(details, rendered, env);
   const { pdf, pageImages } = rendered;
   const term = details.term && { W: 'Winter', S: 'Spring', F: 'Fall' }[details.term.at(-1)] + ' ' + details.term.slice(0, 4);
   const course = details.course.replace(/([A-Z]+)(\d)/, '$1 $2');
@@ -174,9 +174,9 @@ async function exportAssessment(request, env) {
     'Content-Type': 'application/pdf',
     'Content-Disposition': 'attachment; filename="' + filename + '"',
     'X-Assessment-Title': encodeURIComponent(title),
-    'X-Bank-Status': pending.status,
-    ...(pending.published ? { 'X-Bank-Published': '1' } : {}),
-    ...(input.nativePreview === true ? { 'X-PDF-Preview': await createPdfPreview(pending.id, filename, env) } : {}),
+    'X-Bank-Status': entry.status,
+    ...(entry.published ? { 'X-Bank-Published': '1' } : {}),
+    ...(input.nativePreview === true ? { 'X-PDF-Preview': await createPdfPreview(entry.id, filename, env) } : {}),
     'X-Page-Images': JSON.stringify(pageImages),
     'X-Page-Count': String(images.length),
     'X-First-Page': String(ordered[0][0]),

@@ -81,7 +81,7 @@ function applyBankRoute() {
   document.querySelector('#bank-filters').hidden = mode === 'review';
   courseMatches.hidden = true;
   document.querySelector('#bank-upload').hidden = mode === 'review';
-  bankReview.textContent = mode === 'review' ? 'Back to exam bank' : 'Review submissions';
+  bankReview.hidden = mode !== 'review';
   if (mode === 'review') loadReviewQueue();
   else loadExamList();
 }
@@ -95,7 +95,7 @@ function selectableTerms(terms) {
   bankTerm.value = selected;
 }
 
-async function loadExamList() {
+async function loadExamList({ notice } = {}) {
   if (bankMode() !== 'bank') return;
   const request = ++bankRequest;
   bankList.replaceChildren();
@@ -113,15 +113,17 @@ async function loadExamList() {
     selectableTerms(terms);
     const coursePage = location.hash.startsWith('#exam-bank/');
     showCourseMatches(coursePage ? [] : courses);
-    bankStatus.textContent = exams.length ? '' : 'No approved exams match these filters.';
+    bankStatus.textContent = notice || (exams.length ? '' : 'No exams match these filters.');
     const groups = Map.groupBy(exams, exam => exam.course);
     for (const [course, entries] of groups) {
       const heading = document.createElement('h2');
       heading.className = 'course-title';
-      const link = document.createElement('a');
-      link.href = '#exam-bank/' + course;
-      link.textContent = courseLabel(course);
-      heading.append(link);
+      if (course) {
+        const link = document.createElement('a');
+        link.href = '#exam-bank/' + course;
+        link.textContent = courseLabel(course);
+        heading.append(link);
+      } else heading.textContent = 'Course unknown';
       const group = document.createElement('section');
       group.className = 'panel';
       for (const exam of entries) group.append(createExamEntry(exam));
@@ -428,12 +430,12 @@ contributionForm.addEventListener('submit', async event => {
     submission.set('firstPage', firstPage);
     submission.set('blankConfirmed', 'yes');
     pages.forEach(image => submission.append('page', image, 'page.jpg'));
-    contributionStatus.textContent = 'Submitting for review…';
-    const { status } = await (await bankFetch('submissions', { method: 'POST', body: submission })).json();
+    contributionStatus.textContent = 'Adding PDF…';
+    const { status, published } = await (await bankFetch('submissions', { method: 'POST', body: submission })).json();
     contribution.close();
-    ++bankRequest;
-    bankStatus.textContent = status === 'duplicate' ?
-      'This PDF has already been submitted.' : 'Submitted. Your PDF is pending editor review.';
+    const notice = status === 'published' ? 'Added to the exam bank.' :
+      published ? 'This PDF is already in the exam bank.' : 'This PDF has already been submitted.';
+    await loadExamList({ notice });
   } catch (error) {
     contributionStatus.textContent = error.message || 'The PDF could not be submitted.';
   } finally {

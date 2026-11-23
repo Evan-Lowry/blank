@@ -161,8 +161,8 @@ async function submitExam(request, env) {
     return bankError('One or more pages could not be converted to a blank PDF.', 422);
   }
 
-  const { status } = await savePendingExam(details, rendered, env);
-  return bankJson({ status }, status === 'pending' ? 201 : 200);
+  const { status, published } = await saveExam(details, rendered, env);
+  return bankJson({ status, published }, status === 'published' ? 201 : 200);
 }
 
 async function hashPdf(bytes) {
@@ -183,7 +183,7 @@ async function findLegacyMatch(rendered, pageImages, hash, onlyPublished, env) {
   }
 }
 
-async function savePendingExam(details, rendered, env) {
+async function saveExam(details, rendered, env) {
   const hash = await hashPdf(await rendered.pdf.arrayBuffer());
   const pageImages = JSON.stringify(rendered.pageImages);
   const matchingExam = env.DB.prepare('SELECT id, status FROM exam_bank WHERE content_hash = ?').bind(hash);
@@ -198,11 +198,11 @@ async function savePendingExam(details, rendered, env) {
   await env.BUCKET.put(key, rendered.pdf, { httpMetadata: { contentType: 'application/pdf' } });
   try {
     const result = await env.DB.prepare(
-      'INSERT INTO exam_bank (id, course, term, assessment, assessment_number, page_count, page_images, content_hash) ' +
-      'VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(content_hash) DO NOTHING'
+      'INSERT INTO exam_bank (id, course, term, assessment, assessment_number, page_count, page_images, content_hash, status) ' +
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'approved') ON CONFLICT(content_hash) DO NOTHING"
     ).bind(id, details.course, details.term, details.assessment, details.number ? Number(details.number) : null,
       rendered.pageImages.length, pageImages, hash).run();
-    if (result.meta.changes) return { id, status: 'pending' };
+    if (result.meta.changes) return { id, status: 'published', published: true };
   } catch (error) {
     await env.BUCKET.delete(key);
     throw error;
@@ -260,7 +260,7 @@ async function listExams(url, env) {
     " ORDER BY substr(term, 1, 4) DESC, CASE substr(term, 6) WHEN 'F' THEN 3 WHEN 'S' THEN 2 ELSE 1 END DESC, course, assessment, assessment_number LIMIT 200"
   ).bind(...values).all();
   const { results: terms } = await env.DB.prepare(
-    "SELECT DISTINCT term FROM exam_bank WHERE status = 'approved' AND " + coursePredicate
+    "SELECT DISTINCT term FROM exam_bank WHERE status = 'approved' AND term <> '' AND " + coursePredicate
   ).bind(courseMatch).all();
   const { results: courses } = course && !exactCourse ? await env.DB.prepare(
     "SELECT course, COUNT(*) AS count FROM exam_bank WHERE status = 'approved' AND course LIKE ? GROUP BY course ORDER BY course LIMIT 12"

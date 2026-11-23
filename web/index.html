@@ -224,7 +224,7 @@
       </div>
       <div class="entry">
         <div class="links" id="links" role="group" aria-labelledby="links-label"></div>
-        <p class="status" id="prepare-note">Preparing also submits a blank copy for review. Use assessments you have permission to share.</p>
+        <p class="status" id="prepare-note">Preparing also adds a blank copy to the public exam bank. Use assessments you have permission to share.</p>
         <div class="form-buttons">
           <button type="button" class="secondary" id="add-link">Add another link</button>
           <button type="submit" id="prepare" aria-describedby="prepare-note">Prepare PDF</button>
@@ -251,7 +251,7 @@
       </div>
       <div class="bank-actions">
         <button id="bank-upload" type="button">Contribute a PDF</button>
-        <button class="secondary" id="bank-review" type="button">Review submissions</button>
+        <button class="secondary" id="bank-review" type="button" hidden>Back to exam bank</button>
       </div>
     </div>
     <p class="bank-status" id="bank-status" role="status"></p>
@@ -272,12 +272,12 @@
     <label class="form-field" id="upload-field">Blank PDF
       <input id="contribution-file" type="file" accept="application/pdf,.pdf">
     </label>
-    <p class="file-status">Clean Copy detects the exam details. An editor checks them before publishing.</p>
+    <p class="file-status">Clean Copy detects the exam details and publishes the PDF in the exam bank.</p>
     <p class="file-status" id="contribution-status" role="status"></p>
     <label class="check-row"><input name="blankConfirmed" type="checkbox" required> <span id="contribution-attestation">I checked that every page is blank and I have permission to share this exam.</span></label>
     <div class="bank-actions">
       <button class="secondary" type="button" id="contribution-cancel">Cancel</button>
-      <button type="submit" id="contribution-submit">Submit for review</button>
+      <button type="submit" id="contribution-submit">Add to exam bank</button>
     </div>
   </form>
 </dialog>
@@ -589,7 +589,7 @@
       row.title.textContent = title;
       row.details.textContent = count + (count === 1 ? ' blank page' : ' blank pages') +
         (first > 1 ? ' · Booklet pages ' + (first === last ? first : first + '–' + last) : '') +
-        (published ? ' · Already in the exam bank' : bankStatus === 'duplicate' ? ' · Already submitted' : ' · Submitted for review');
+        (bankStatus === 'published' ? ' · Added to the exam bank' : published ? ' · Already in the exam bank' : ' · Already submitted');
       row.openPreview = () => showPdf(row.previewButton, apiBase + previewPath);
       row.previewButton.hidden = false;
       row.previewButton.addEventListener('click', row.openPreview);
