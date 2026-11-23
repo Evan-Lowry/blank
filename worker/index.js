@@ -2,7 +2,7 @@ import { makePdf } from './pdf.js';
 
 const crowdmarkOrigin = 'https://app.crowdmark.com';
 const githubPagesOrigin = 'https://evan-lowry.github.io';
-const publicPagesEndpoint = /^\/api\/(?:export|bank\/(?:exams|submissions|pdf\/[a-f0-9-]{36}))$/;
+const publicPagesEndpoint = /^\/api\/(?:export|bank\/(?:exams|pdf\/[a-f0-9-]{36}))$/;
 const pagesHeaders = {
   'Access-Control-Allow-Origin': githubPagesOrigin,
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -129,9 +129,9 @@ async function exportAssessment(request, env) {
   }
   const id = scoreId(input?.link);
   if (input?.submitForReview !== true) {
-    throw new ExportError(422, 'Refresh Clean Copy before preparing this PDF.');
+    throw new ExportError(422, 'Refresh blank. before preparing this PDF.');
   }
-  if (!env.DB || !env.BUCKET) throw new ExportError(503, 'The exam bank is currently unavailable.');
+  if (!env.DB || !env.BUCKET) throw new ExportError(503, 'The assessment bank is currently unavailable.');
   let payload = input.template;
   if (payload?.data?.id !== id) {
     const response = await upstream(crowdmarkOrigin + '/api/v1/student/results/' + id, {
@@ -187,12 +187,20 @@ async function exportAssessment(request, env) {
 async function handleRequest(request, env) {
   const url = new URL(request.url);
   const { pathname } = url;
+  if (pathname === '/api/sync') {
+    try {
+      return await handleSync(request, url, env);
+    } catch (error) {
+      console.error('Sync request failed:', error.name, error.message.split('\n')[0]);
+      return bankError('Sync could not complete this request.', 502);
+    }
+  }
   if (pathname.startsWith('/api/bank/')) {
     try {
       return await handleExamBank(request, url, env);
     } catch (error) {
-      console.error('Exam bank request failed:', error.name, error.message.split('\n')[0]);
-      return bankError('The exam bank could not complete this request.', 502);
+      console.error('Assessment bank request failed:', error.name, error.message.split('\n')[0]);
+      return bankError('The assessment bank could not complete this request.', 502);
     }
   }
   if (request.method === 'GET' && Object.hasOwn(APP_ASSETS, pathname)) {

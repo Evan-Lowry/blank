@@ -45,17 +45,6 @@ function detectFromLabel(label) {
   return { course: uniqueMatch(courses), term: uniqueMatch(terms), assessment, number: uniqueMatch(numbers) || null };
 }
 
-function detectUpload(filename, firstPage) {
-  const name = detectFromLabel(typeof filename === 'string' ? filename.replace(/\.pdf$/i, '') : '');
-  const text = detectFromLabel(typeof firstPage === 'string' ? firstPage.split('\n').slice(0, 8).join(' ') : '');
-  const result = {};
-  for (const field of ['course', 'term', 'assessment', 'number']) {
-    result[field] = name[field] && text[field] && name[field] !== text[field] ? '' : name[field] || text[field] || '';
-  }
-  if (!result.assessment) result.number = null;
-  return result;
-}
-const maxSubmission = 24 * 1024 * 1024;
 const entryId = '[a-f0-9-]{36}';
 const bankHeaders = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
 
@@ -130,41 +119,6 @@ function cleanJpeg(bytes) {
   throw new Error('Invalid JPEG');
 }
 
-async function submitExam(request, env) {
-  const limit = maxSubmission + 128 * 1024;
-  const length = Number(request.headers.get('content-length'));
-  if (length > limit) return bankError('The submitted pages exceed the 24 MB limit.', 413);
-  if (!request.headers.get('content-type')?.startsWith('multipart/form-data;')) return bankError('Select a blank PDF.');
-  let form;
-  try {
-    const data = await readBytes(new Response(request.body, { headers: request.headers }), limit);
-    form = await new Response(data, { headers: { 'Content-Type': request.headers.get('content-type') } }).formData();
-  } catch {
-    return bankError('The upload could not be read or exceeds 24 MB.', 413);
-  }
-  if (form.get('blankConfirmed') !== 'yes') return bankError('Confirm that the PDF is blank and that you can share it.');
-  const details = detectUpload(form.get('filename'), form.get('firstPage'));
-  const pages = form.getAll('page');
-  if (!pages.length || pages.length > 40 || pages.some(page => typeof page === 'string' || page.size > 4 * 1024 * 1024)) {
-    return bankError('A submission must have 1–40 readable pages, up to 4 MB per page.', 422);
-  }
-
-  let rendered;
-  try {
-    const images = [];
-    for (const page of pages) images.push(cleanJpeg(new Uint8Array(await page.arrayBuffer())));
-    if (images.reduce((total, image) => total + image.length, 0) > maxSubmission) {
-      return bankError('The submitted pages exceed the 24 MB limit.', 413);
-    }
-    rendered = makePdf(images);
-  } catch {
-    return bankError('One or more pages could not be converted to a blank PDF.', 422);
-  }
-
-  const { status, published } = await saveExam(details, rendered, env);
-  return bankJson({ status, published }, status === 'published' ? 201 : 200);
-}
-
 async function hashPdf(bytes) {
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
   return Array.from(digest, byte => byte.toString(16).padStart(2, '0')).join('');
@@ -183,6 +137,21 @@ async function findLegacyMatch(rendered, pageImages, hash, onlyPublished, env) {
   }
 }
 
+// Free-plan guard: stop publishing new assessments long before storage or writes could pass Cloudflare's free allowance.
+// A page is roughly 100 to 130 KB, so the default page cap is about 4 GB of the 10 GB free R2 storage. Limits come from wrangler.jsonc.
+async function checkPublishLimits(env) {
+  const limit = (value, fallback) => value !== undefined && value !== '' && Number.isFinite(Number(value)) ? Number(value) : fallback;
+  const maxPages = limit(env.MAX_STORED_PAGES, 30000);
+  const maxDaily = limit(env.MAX_DAILY_PUBLISHES, 300);
+  const usage = await env.DB.prepare(
+    "SELECT COALESCE(SUM(page_count), 0) AS pages, COALESCE(SUM(submitted_at > datetime('now', '-1 day')), 0) AS today FROM exam_bank"
+  ).first();
+  if (usage.pages >= maxPages || usage.today >= maxDaily) {
+    console.error('LIMIT_REACHED: publishing is paused', JSON.stringify({ pages: usage.pages, today: usage.today, maxPages, maxDaily }));
+    throw new ExportError(503, 'blank. has reached its free storage limit for now, so new assessments can’t be added. Please try again later.');
+  }
+}
+
 async function saveExam(details, rendered, env) {
   const hash = await hashPdf(await rendered.pdf.arrayBuffer());
   const pageImages = JSON.stringify(rendered.pageImages);
@@ -191,25 +160,29 @@ async function saveExam(details, rendered, env) {
   if (existing?.status !== 'approved') {
     existing = await findLegacyMatch(rendered, pageImages, hash, Boolean(existing), env) || existing;
   }
-  if (existing) return { id: existing.id, status: 'duplicate', published: existing.status === 'approved' };
+  if (existing) return { id: existing.id, status: existing.status === 'approved' ? 'duplicate' : 'unlisted', published: existing.status === 'approved' };
 
+  // Only assessments whose course, term, and type were all recognised are added to the public bank. The rest are stored
+  // hidden (status 'pending') so the person who converted still gets a preview and download.
+  const recognised = Boolean(details.course && details.term && details.assessment);
+  await checkPublishLimits(env);
   const id = crypto.randomUUID();
   const key = 'exams/' + id + '.pdf';
   await env.BUCKET.put(key, rendered.pdf, { httpMetadata: { contentType: 'application/pdf' } });
   try {
     const result = await env.DB.prepare(
       'INSERT INTO exam_bank (id, course, term, assessment, assessment_number, page_count, page_images, content_hash, status) ' +
-      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'approved') ON CONFLICT(content_hash) DO NOTHING"
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(content_hash) DO NOTHING"
     ).bind(id, details.course, details.term, details.assessment, details.number ? Number(details.number) : null,
-      rendered.pageImages.length, pageImages, hash).run();
-    if (result.meta.changes) return { id, status: 'published', published: true };
+      rendered.pageImages.length, pageImages, hash, recognised ? 'approved' : 'pending').run();
+    if (result.meta.changes) return { id, status: recognised ? 'published' : 'unlisted', published: recognised };
   } catch (error) {
     await env.BUCKET.delete(key);
     throw error;
   }
   await env.BUCKET.delete(key);
   const winner = await matchingExam.first();
-  return { id: winner.id, status: 'duplicate', published: winner.status === 'approved' };
+  return { id: winner.id, status: winner.status === 'approved' ? 'duplicate' : 'unlisted', published: winner.status === 'approved' };
 }
 
 async function createPdfPreview(id, filename, env) {
@@ -243,10 +216,23 @@ async function getPdfPreview(token, env) {
 const bankFields = 'id, course, term, assessment, assessment_number, page_count';
 
 async function listExams(url, env) {
+  const ids = url.searchParams.get('ids');
+  if (ids !== null) {
+    // A saved or shared study list: fetch these assessments by id.
+    if (!new RegExp('^' + entryId + '(?:,' + entryId + '){0,59}$').test(ids)) return bankError('Check the list link.');
+    const list = ids.split(',');
+    const { results: exams } = await env.DB.prepare(
+      "SELECT " + bankFields + " FROM exam_bank WHERE status = 'approved' AND course <> '' AND id IN (" + list.map(() => '?').join(',') + ")"
+    ).bind(...list).all();
+    return bankJson({ exams, terms: [], courses: [] });
+  }
   const course = normalizedCourse(url.searchParams.get('course'));
   const term = url.searchParams.get('term');
   const assessment = url.searchParams.get('assessment');
+  const year = url.searchParams.get('year');
+  const season = url.searchParams.get('season');
   if (!/^[A-Z0-9]{0,12}$/.test(course) || (term && !validTerm(term)) ||
+      (year && !/^(?:19|20)\d{2}$/.test(year)) || (season && !/^[WSF]$/.test(season)) ||
       (assessment && !assessmentTypes.has(assessment))) return bankError('Check the search filters.');
   const exactCourse = url.searchParams.get('exact') === '1';
   const courseMatch = exactCourse ? course : course + '%';
@@ -254,16 +240,18 @@ async function listExams(url, env) {
   const values = [courseMatch];
   let filters = '';
   if (term) { filters += ' AND term = ?'; values.push(term); }
+  if (year) { filters += ' AND substr(term, 1, 4) = ?'; values.push(year); }
+  if (season) { filters += ' AND substr(term, 6) = ?'; values.push(season); }
   if (assessment) { filters += ' AND assessment = ?'; values.push(assessment); }
   const { results: exams } = await env.DB.prepare(
-    "SELECT " + bankFields + " FROM exam_bank WHERE status = 'approved' AND " + coursePredicate + filters +
+    "SELECT " + bankFields + " FROM exam_bank WHERE status = 'approved' AND course <> '' AND " + coursePredicate + filters +
     " ORDER BY substr(term, 1, 4) DESC, CASE substr(term, 6) WHEN 'F' THEN 3 WHEN 'S' THEN 2 ELSE 1 END DESC, course, assessment, assessment_number LIMIT 200"
   ).bind(...values).all();
   const { results: terms } = await env.DB.prepare(
     "SELECT DISTINCT term FROM exam_bank WHERE status = 'approved' AND term <> '' AND " + coursePredicate
   ).bind(courseMatch).all();
   const { results: courses } = course && !exactCourse ? await env.DB.prepare(
-    "SELECT course, COUNT(*) AS count FROM exam_bank WHERE status = 'approved' AND course LIKE ? GROUP BY course ORDER BY course LIMIT 12"
+    "SELECT course, COUNT(*) AS count FROM exam_bank WHERE status = 'approved' AND course <> '' AND course LIKE ? GROUP BY course ORDER BY course LIMIT 12"
   ).bind(course + '%').all() : { results: [] };
   return bankJson({ exams, terms: terms.map(row => row.term), courses });
 }
@@ -273,13 +261,122 @@ async function getBankPdf(id, editor, inline, env) {
     'SELECT ' + bankFields + ', page_images, status FROM exam_bank WHERE id = ?'
   ).bind(id).first();
   if (!entry || (entry.status !== 'approved' && !(editor && entry.status === 'pending'))) {
-    return bankError('Exam not found.', 404);
+    return bankError('Assessment not found.', 404);
   }
   const filename = ([entry.course, entry.term, entry.assessment, entry.assessment_number].filter(Boolean).join('-') || 'pending-blank-assessment') + '.pdf';
   return readStoredPdf(id, filename, inline, {
     'X-Page-Images': entry.page_images,
     'X-Page-Count': String(entry.page_count),
   }, env);
+}
+
+async function bankSummary(env) {
+  const approved = "status = 'approved' AND course <> ''";
+  const totals = await env.DB.prepare(
+    "SELECT COUNT(*) AS exams, COUNT(DISTINCT NULLIF(course, '')) AS courses FROM exam_bank WHERE " + approved
+  ).first();
+  const { results: recent } = await env.DB.prepare(
+    "SELECT " + bankFields + " FROM exam_bank WHERE " + approved + " AND course <> '' AND term <> '' AND assessment <> '' ORDER BY submitted_at DESC, id LIMIT 6"
+  ).all();
+  const { results: courses } = await env.DB.prepare(
+    "SELECT course, COUNT(*) AS count FROM exam_bank WHERE " + approved + " AND course <> '' GROUP BY course ORDER BY count DESC, course LIMIT 12"
+  ).all();
+  return bankJson({ exams: totals?.exams || 0, courseCount: totals?.courses || 0, recent, courses });
+}
+
+// Sync without accounts: a private 16-character code identifies one saved copy of a person's lists.
+// Only a hash of the code is stored, and the code travels in a header so it never appears in a URL or log line.
+const syncAlphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+const syncShape = /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{16}$/;
+
+async function syncHash(code) {
+  const normal = String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!syncShape.test(normal)) return;
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('blank-sync:' + normal));
+  return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function newSyncCode() {
+  const letters = [...crypto.getRandomValues(new Uint8Array(16))].map(byte => syncAlphabet[byte & 31]).join('');
+  return letters.match(/.{4}/g).join('-');
+}
+
+// Same shape and limits as the lists kept in the browser: up to 20 lists of up to 60 assessments.
+function cleanSyncLists(value) {
+  return (Array.isArray(value) ? value : [])
+    .filter(item => item && /^[a-z0-9]{4,12}$/.test(item.id) && typeof item.name === 'string')
+    .slice(0, 20)
+    .map(item => ({
+      id: item.id,
+      name: item.name.slice(0, 40),
+      ids: (Array.isArray(item.ids) ? item.ids : []).filter(id => new RegExp('^' + entryId + '$').test(id)).slice(0, 60),
+    }));
+}
+
+async function handleSync(request, url, env) {
+  const mode = request.method;
+  if (mode !== 'GET' && !allowedWriteOrigin(request, url)) return bankError('Forbidden.', 403);
+  if (!env.DB) return bankError('Sync is unavailable.', 503);
+  let body;
+  if (mode === 'POST' || mode === 'PUT') {
+    const text = await request.text();
+    if (text.length > 64 * 1024) return bankError('That is too much to sync.', 413);
+    try {
+      body = JSON.parse(text);
+    } catch {
+      return bankError('Check the request.');
+    }
+  }
+  if (mode === 'POST') {
+    const limit = Number(env.MAX_DAILY_SYNC_PROFILES);
+    const maxDaily = Number.isFinite(limit) && env.MAX_DAILY_SYNC_PROFILES !== '' && env.MAX_DAILY_SYNC_PROFILES !== undefined ? limit : 500;
+    const today = await env.DB.prepare("SELECT COUNT(*) AS n FROM sync_profiles WHERE created_at > datetime('now', '-1 day')").first();
+    if (today.n >= maxDaily) {
+      console.error('LIMIT_REACHED: new sync codes paused', JSON.stringify({ today: today.n, maxDaily }));
+      return bankError('Sync is busy right now. Try again later.', 503);
+    }
+    const code = newSyncCode();
+    await env.DB.prepare('INSERT INTO sync_profiles (key_hash, data) VALUES (?, ?)')
+      .bind(await syncHash(code), JSON.stringify(cleanSyncLists(body?.lists))).run();
+    return bankJson({ code, version: 1 }, 201);
+  }
+  const key = await syncHash(request.headers.get('x-sync-code'));
+  if (!key) return bankError('That code isn’t valid.', 400);
+  const row = await env.DB.prepare('SELECT data, version FROM sync_profiles WHERE key_hash = ?').bind(key).first();
+  if (!row) return bankError('That code wasn’t found.', 404);
+  if (mode === 'GET') return bankJson({ lists: JSON.parse(row.data), version: row.version });
+  if (mode === 'DELETE') {
+    await env.DB.prepare('DELETE FROM sync_profiles WHERE key_hash = ?').bind(key).run();
+    return bankJson({ ok: true });
+  }
+  if (mode === 'PUT') {
+    const saved = row.version === body?.baseVersion && (await env.DB.prepare(
+      "UPDATE sync_profiles SET data = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE key_hash = ? AND version = ?"
+    ).bind(JSON.stringify(cleanSyncLists(body.lists)), key, row.version).run()).meta.changes;
+    if (!saved) {
+      // Another device saved first. Hand back its copy so this device can merge and retry.
+      const latest = await env.DB.prepare('SELECT data, version FROM sync_profiles WHERE key_hash = ?').bind(key).first();
+      return bankJson({ lists: JSON.parse(latest.data), version: latest.version }, 409);
+    }
+    return bankJson({ version: row.version + 1 });
+  }
+  return bankError('Not found.', 404);
+}
+
+const reportReasons = new Set(['student-work', 'wrong-details', 'other']);
+
+async function reportExam(request, env) {
+  const input = await request.json().catch(() => null);
+  if (!new RegExp('^' + entryId + '$').test(input?.id) || !reportReasons.has(input?.reason)) {
+    return bankError('Choose what is wrong with this assessment.');
+  }
+  const exam = await env.DB.prepare("SELECT id FROM exam_bank WHERE id = ? AND status = 'approved'").bind(input.id).first();
+  if (!exam) return bankError('Assessment not found.', 404);
+  // Reports never remove an entry by themselves. Cap per-exam volume so they cannot be used to flood the table.
+  await env.DB.prepare(
+    "INSERT INTO exam_reports (exam_id, reason) SELECT ?, ? WHERE (SELECT COUNT(*) FROM exam_reports WHERE exam_id = ?) < 50"
+  ).bind(input.id, input.reason, input.id).run();
+  return bankJson({ ok: true }, 201);
 }
 
 async function handleExamBank(request, url, env) {
@@ -292,10 +389,26 @@ async function handleExamBank(request, url, env) {
   }
   const reviewRoute = path === '/api/bank/review' || path.startsWith('/api/bank/review/');
   if (reviewRoute && !editor) return bankError('Editor access required.', 403);
-  if (!env.DB || !env.BUCKET) return bankError('Exam bank storage is unavailable.', 503);
+  if (!env.DB || !env.BUCKET) return bankError('Assessment bank storage is unavailable.', 503);
 
   if (path === '/api/bank/exams' && mode === 'GET') return listExams(url, env);
-  if (path === '/api/bank/submissions' && mode === 'POST') return submitExam(request, env);
+  if (path === '/api/bank/summary' && mode === 'GET') return bankSummary(env);
+  if (path === '/api/bank/courses' && mode === 'GET') {
+    const { results: courses } = await env.DB.prepare(
+      "SELECT course, COUNT(*) AS count, MAX(CASE WHEN term = '' THEN '' ELSE substr(term, 1, 4) || CASE substr(term, 6) WHEN 'F' THEN 3 WHEN 'S' THEN 2 ELSE 1 END END) AS latest " +
+      "FROM exam_bank WHERE status = 'approved' AND course <> '' GROUP BY course ORDER BY course LIMIT 2000"
+    ).all();
+    return bankJson({ courses });
+  }
+  if (path === '/api/bank/report' && mode === 'POST') return reportExam(request, env);
+  if (path === '/api/bank/reports' && mode === 'GET') {
+    if (!editor) return bankError('Editor access required.', 403);
+    const { results } = await env.DB.prepare(
+      "SELECT e.id, e.course, e.term, e.assessment, e.assessment_number, r.reason, COUNT(*) AS reports, MAX(r.created_at) AS latest " +
+      "FROM exam_reports r JOIN exam_bank e ON e.id = r.exam_id GROUP BY e.id, r.reason ORDER BY latest DESC LIMIT 200"
+    ).all();
+    return bankJson({ reports: results });
+  }
   const preview = new RegExp('^/api/bank/preview/(' + entryId + ')\\.pdf$').exec(path);
   if (preview && mode === 'GET') return getPdfPreview(preview[1], env);
   const pdfMatch = new RegExp('^/api/bank/pdf/(' + entryId + ')$').exec(path);
