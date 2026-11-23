@@ -830,9 +830,9 @@
       const url = objectUrl(pdf);
       row.file = { pdf, filename };
       row.title.textContent = title;
-      row.details.textContent = count + (count === 1 ? ' blank page' : ' blank pages') +
-        (first > 1 ? ' · Booklet pages ' + (first === last ? first : first + '–' + last) : '') +
-        (bankStatus === 'published' ? ' · Added to the assessment bank' : published ? ' · Already in the assessment bank' : ' · Not added to the bank (couldn’t read the course, term, or type)');
+      // Keep it as quiet as the assessment list: just the page count, plus a note only when it was not added to the bank.
+      row.details.textContent = count + (count === 1 ? ' page' : ' pages') + (published ? '' : ' · Not added to the bank');
+      if (!published) row.details.title = 'Couldn’t read the course, term, or type, so it stays private to you.';
       row.openPreview = () => showPdf(row.previewButton, previewPath);
       row.previewButton.hidden = false;
       row.previewButton.addEventListener('click', row.openPreview);
