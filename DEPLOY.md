@@ -22,7 +22,7 @@ Set `WRANGLER_SEND_METRICS=false` to turn off Wrangler's telemetry.
 4. Create the bucket: `npx wrangler r2 bucket create blank-assessments`.
 5. `npm run db:remote`, then `npm run deploy`. The first deploy asks you to pick a `workers.dev` name and prints the live address.
 
-Live now: https://blank.crowdmark-clean-copy.workers.dev
+Live now: https://blank.crowdmark.workers.dev
 
 **Shipping a change:** if it added a file under `drizzle/`, run `npm run db:remote` first, then `npm run deploy`.
 Migrations in the repo that are not yet on the live database: check `npx wrangler d1 migrations list blank --remote`.
@@ -75,7 +75,8 @@ problem, Cloudflare Turnstile.
 
 **Status: Turnstile is currently OFF.** `TURNSTILE_SITE_KEY` in `wrangler.jsonc` is empty and there is no `TURNSTILE_SECRET`, so no widget
 loads and nothing is verified. Only the rate limits and hard caps protect the public endpoints. A widget named `blank` still
-exists in the Cloudflare dashboard (hostname `blank.crowdmark-clean-copy.workers.dev`); its public site key was
+exists in the Cloudflare dashboard, but its allowed hostname is still the old `blank.crowdmark-clean-copy.workers.dev` (edit the widget and
+add `blank.crowdmark.workers.dev` before turning it on); its public site key was
 `0x4AAAAAAGOiu9HvHz0Tdog-`. To turn Turnstile back on, follow the steps below, using that widget (rotate its secret first,
 because it was shown on screen when the widget was created). Set the site key and deploy first, then set the secret,
 never the other way round.
@@ -83,7 +84,7 @@ never the other way round.
 ### Turnstile setup (do these in order)
 1. **Apply the migration:** `npm run db:remote`.
 2. **Create the widget** in the Cloudflare dashboard: **Turnstile → Add widget**. Name it `blank`. Add the hostname(s) the
-   site is served from (`blank.crowdmark-clean-copy.workers.dev`, plus your own domain later). Widget mode **Managed**. Create it,
+   site is served from (`blank.crowdmark.workers.dev`, plus your own domain later). Widget mode **Managed**. Create it,
    then copy the **Site Key** and the **Secret Key**.
 3. **Site key (public):** put it in `wrangler.jsonc` as `vars.TURNSTILE_SITE_KEY`. It is safe to commit.
 4. **Secret key (private):** `npx wrangler secret put TURNSTILE_SECRET` and paste it when asked. Never put it in a file.
