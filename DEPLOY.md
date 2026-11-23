@@ -73,6 +73,13 @@ problem, Cloudflare Turnstile.
   first, then deploy.
 - Try it locally with a lowered limit: `npm run build && npx wrangler dev --local --var RATE_REPORT_PER_HOUR:3`.
 
+**Status: Turnstile is currently OFF.** `TURNSTILE_SITE_KEY` in `wrangler.jsonc` is empty and there is no `TURNSTILE_SECRET`, so no widget
+loads and nothing is verified. Only the rate limits and hard caps protect the public endpoints. A widget named `blank` still
+exists in the Cloudflare dashboard (hostname `blank.crowdmark-clean-copy.workers.dev`); its public site key was
+`0x4AAAAAAGOiu9HvHz0Tdog-`. To turn Turnstile back on, follow the steps below, using that widget (rotate its secret first,
+because it was shown on screen when the widget was created). Set the site key and deploy first, then set the secret,
+never the other way round.
+
 ### Turnstile setup (do these in order)
 1. **Apply the migration:** `npm run db:remote`.
 2. **Create the widget** in the Cloudflare dashboard: **Turnstile → Add widget**. Name it `blank`. Add the hostname(s) the

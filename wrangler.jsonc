@@ -27,8 +27,8 @@
     "RATE_EXPORT_PER_HOUR": "20",
     "RATE_REPORT_PER_HOUR": "10",
     "RATE_SYNC_CREATE_PER_HOUR": "5",
-    // Cloudflare Turnstile: the public site key goes here, the secret is a Worker secret (TURNSTILE_SECRET).
-    "TURNSTILE_SITE_KEY": "0x4AAAAAAGOiu9HvHz0Tdog-"
+    // Cloudflare Turnstile is OFF while this is empty (no widget, no check). To turn it on, see DEPLOY.md: put the public site key here and set the Worker secret TURNSTILE_SECRET.
+    "TURNSTILE_SITE_KEY": ""
   },
   "observability": { "enabled": true }
 }
