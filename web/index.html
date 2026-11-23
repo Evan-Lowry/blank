@@ -415,6 +415,17 @@
     });
   }
 
+  function isCrowdmarkLink(value) {
+    if (value.length > 2048) return false;
+    try {
+      const url = new URL(value);
+      return url.origin === 'https://app.crowdmark.com' && !url.username && !url.password &&
+        /^\/score\/[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\/?$/i.test(url.pathname);
+    } catch {
+      return false;
+    }
+  }
+
   function addField(value = '', after) {
     const row = linkTemplate.content.firstElementChild.cloneNode(true);
     const input = row.querySelector('input');
@@ -426,12 +437,16 @@
       next.querySelector('input').focus();
     });
     input.addEventListener('paste', (event) => {
-      const pasted = event.clipboardData.getData('text').trim().split(/\s+/).filter(Boolean);
-      if (pasted.length < 2) return;
       event.preventDefault();
-      input.value = pasted[0];
+      const links = [...new Set(event.clipboardData.getData('text').split(/\s+/).filter(isCrowdmarkLink))];
+      status.classList.toggle('error', links.length === 0);
+      if (!links.length) {
+        status.textContent = 'Paste a shareable Crowdmark results link.';
+        return;
+      }
+      input.value = links[0];
       let previous = row;
-      for (const link of pasted.slice(1)) previous = addField(link, previous);
+      for (const link of links.slice(1)) previous = addField(link, previous);
       previous.querySelector('input').focus();
       status.textContent = '';
     });
