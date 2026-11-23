@@ -20,18 +20,18 @@ function isBankEditor(request, env) {
 }
 
 function normalizedCourse(value) {
-  return String(value || '').trim().toUpperCase().replace(/\s+/g, '');
+  return String(value || '').trim().toUpperCase().replace(/[\s-]+/g, '');
 }
 
 function validTerm(value) {
   return /^(?:19|20)\d{2}-[WSF]$/.test(value);
 }
 
-function validateExam(form) {
-  const course = normalizedCourse(form.get('course'));
-  const term = String(form.get('term') || '');
-  const assessment = String(form.get('assessment') || '');
-  const numberText = String(form.get('assessmentNumber') || '').trim();
+function validateExam(fields) {
+  const course = normalizedCourse(fields?.course);
+  const term = String(fields?.term || '');
+  const assessment = String(fields?.assessment || '');
+  const numberText = String(fields?.assessmentNumber || '').trim();
   if (!/^[A-Z]{2,8}\d{3}[A-Z]?$/.test(course) || !validTerm(term) ||
       !assessmentTypes.has(assessment) || (numberText && !/^[1-9]\d?$/.test(numberText))) return;
   return { course, term, assessment, number: numberText ? Number(numberText) : null };
@@ -88,8 +88,12 @@ async function submitExam(request, env) {
   } catch {
     return bankError('The upload could not be read or exceeds 24 MB.', 413);
   }
-  const details = validateExam(form);
+  const fields = Object.fromEntries(form);
+  const details = validateExam(fields);
   if (!details || form.get('blankConfirmed') !== 'yes') return bankError('Confirm the PDF is blank and complete the exam details.');
+  if (fields.duplicateConfirmed !== 'yes' && (await comparableExams(details, env)).length) {
+    return bankError('Similar exams already exist. Check them before contributing this copy.', 409);
+  }
   const pages = form.getAll('page');
   if (!pages.length || pages.length > 40 || pages.some(page => typeof page === 'string' || page.size > 4 * 1024 * 1024)) {
     return bankError('A submission must have 1–40 readable pages, up to 4 MB per page.', 422);
@@ -107,19 +111,23 @@ async function submitExam(request, env) {
     return bankError('One or more pages could not be converted to a blank PDF.', 422);
   }
 
+  await savePendingExam(details, rendered, env);
+  return bankJson({ status: 'pending' }, 201);
+}
+
+async function savePendingExam(details, rendered, env) {
   const id = crypto.randomUUID();
   const key = 'exams/' + id + '.pdf';
   await env.BUCKET.put(key, rendered.pdf, { httpMetadata: { contentType: 'application/pdf' } });
   try {
     await env.DB.prepare(
       'INSERT INTO exam_bank (id, course, term, assessment, assessment_number, page_count, page_images) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    ).bind(id, details.course, details.term, details.assessment, details.number, pages.length,
+    ).bind(id, details.course, details.term, details.assessment, details.number, rendered.pageImages.length,
       JSON.stringify(rendered.pageImages)).run();
   } catch (error) {
     await env.BUCKET.delete(key);
     throw error;
   }
-  return bankJson({ status: 'pending' }, 201);
 }
 
 const bankFields = 'id, course, term, assessment, assessment_number, page_count';
@@ -130,21 +138,35 @@ async function listExams(url, env) {
   const assessment = url.searchParams.get('assessment');
   if (!/^[A-Z0-9]{0,12}$/.test(course) || (term && !validTerm(term)) ||
       (assessment && !assessmentTypes.has(assessment))) return bankError('Check the search filters.');
-  const values = [course + '%'];
+  const exactCourse = url.searchParams.get('exact') === '1';
+  const courseMatch = exactCourse ? course : course + '%';
+  const coursePredicate = exactCourse ? 'course = ?' : 'course LIKE ?';
+  const values = [courseMatch];
   let filters = '';
   if (term) { filters += ' AND term = ?'; values.push(term); }
   if (assessment) { filters += ' AND assessment = ?'; values.push(assessment); }
   const { results: exams } = await env.DB.prepare(
-    "SELECT " + bankFields + " FROM exam_bank WHERE status = 'approved' AND course LIKE ?" + filters +
+    "SELECT " + bankFields + " FROM exam_bank WHERE status = 'approved' AND " + coursePredicate + filters +
     " ORDER BY substr(term, 1, 4) DESC, CASE substr(term, 6) WHEN 'F' THEN 3 WHEN 'S' THEN 2 ELSE 1 END DESC, course, assessment, assessment_number LIMIT 200"
   ).bind(...values).all();
   const { results: terms } = await env.DB.prepare(
-    "SELECT DISTINCT term FROM exam_bank WHERE status = 'approved' AND course LIKE ?"
-  ).bind(course + '%').all();
-  return bankJson({ exams, terms: terms.map(row => row.term) });
+    "SELECT DISTINCT term FROM exam_bank WHERE status = 'approved' AND " + coursePredicate
+  ).bind(courseMatch).all();
+  const { results: courses } = course && !exactCourse ? await env.DB.prepare(
+    "SELECT course, COUNT(*) AS count FROM exam_bank WHERE status = 'approved' AND course LIKE ? GROUP BY course ORDER BY course LIMIT 12"
+  ).bind(course + '%').all() : { results: [] };
+  return bankJson({ exams, terms: terms.map(row => row.term), courses });
 }
 
-async function getBankPdf(id, editor, env) {
+async function comparableExams(details, env) {
+  const { results } = await env.DB.prepare(
+    "SELECT " + bankFields + " FROM exam_bank WHERE status = 'approved' AND course = ? AND term = ? AND assessment = ?" +
+    " AND (? IS NULL OR assessment_number IS NULL OR assessment_number = ?) LIMIT 10"
+  ).bind(details.course, details.term, details.assessment, details.number, details.number).all();
+  return results;
+}
+
+async function getBankPdf(id, editor, inline, env) {
   const entry = await env.DB.prepare(
     'SELECT ' + bankFields + ', page_images, status FROM exam_bank WHERE id = ?'
   ).bind(id).first();
@@ -157,7 +179,7 @@ async function getBankPdf(id, editor, env) {
   return new Response(object.body, { headers: {
     ...bankHeaders,
     'Content-Type': 'application/pdf',
-    'Content-Disposition': 'attachment; filename="' + filename + '"',
+    'Content-Disposition': (inline ? 'inline' : 'attachment') + '; filename="' + filename + '"',
     'X-Page-Images': entry.page_images,
     'X-Page-Count': String(entry.page_count),
   } });
@@ -176,9 +198,13 @@ async function handleExamBank(request, url, env) {
   if (!env.DB || !env.BUCKET) return bankError('Exam bank storage is unavailable.', 503);
 
   if (path === '/api/bank/exams' && mode === 'GET') return listExams(url, env);
+  if (path === '/api/bank/similar' && mode === 'GET') {
+    const details = validateExam(Object.fromEntries(url.searchParams));
+    return bankJson({ exams: details ? await comparableExams(details, env) : [] });
+  }
   if (path === '/api/bank/submissions' && mode === 'POST') return submitExam(request, env);
   const pdfMatch = new RegExp('^/api/bank/pdf/(' + entryId + ')$').exec(path);
-  if (pdfMatch && mode === 'GET') return getBankPdf(pdfMatch[1], editor, env);
+  if (pdfMatch && mode === 'GET') return getBankPdf(pdfMatch[1], editor, url.searchParams.get('view') === '1', env);
   if (path === '/api/bank/review' && mode === 'GET') {
     const { results: exams } = await env.DB.prepare(
       "SELECT " + bankFields + " FROM exam_bank WHERE status = 'pending' ORDER BY submitted_at, id LIMIT 200"

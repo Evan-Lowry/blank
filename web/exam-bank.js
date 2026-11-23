@@ -1,6 +1,7 @@
 const bankView = document.querySelector('#bank-view');
 const converterView = document.querySelector('#converter-view');
 const bankCourse = document.querySelector('#bank-course');
+const courseMatches = document.querySelector('#course-matches');
 const bankTerm = document.querySelector('#bank-term');
 const bankAssessment = document.querySelector('#bank-assessment');
 const bankList = document.querySelector('#bank-list');
@@ -14,14 +15,22 @@ const contributionStatus = document.querySelector('#contribution-status');
 const contributionSubmit = document.querySelector('#contribution-submit');
 const seasons = { W: 'Winter', S: 'Spring', F: 'Fall' };
 const termOrder = { W: 1, S: 2, F: 3 };
+const duplicateNotice = document.querySelector('#duplicate-notice');
+const duplicateList = document.querySelector('#duplicate-list');
+const duplicateConfirm = document.querySelector('#duplicate-confirm');
 const submissionLimit = 24 * 1024 * 1024;
 let bankRequest = 0;
-let bankPreviewRequest = 0;
 let bankSearchTimer;
 let contributionSource;
 let uploadCheck = 0;
 let pdfLibrary;
 let uploadAutofill = {};
+let duplicateTimer;
+let duplicateRequest = 0;
+
+function courseKey(value) {
+  return value.toUpperCase().replace(/[\s-]+/g, '');
+}
 
 function courseLabel(code) {
   return code.replace(/([A-Z]+)(\d)/, '$1 $2');
@@ -57,7 +66,6 @@ function applyBankRoute() {
   const mode = bankMode();
   clearTimeout(bankSearchTimer);
   bankRequest++;
-  bankPreviewRequest++;
   hidePreview();
   converterView.hidden = mode !== 'converter';
   bankView.hidden = mode === 'converter';
@@ -75,6 +83,7 @@ function applyBankRoute() {
   document.querySelector('#bank-heading').textContent = mode === 'review' ? 'Review submissions' :
     routeCourse ? courseLabel(routeCourse[1].toUpperCase()) + ' Exams' : 'Waterloo Exam Bank';
   document.querySelector('#bank-filters').hidden = mode === 'review';
+  courseMatches.hidden = true;
   document.querySelector('#bank-upload').hidden = mode === 'review';
   bankReview.textContent = mode === 'review' ? 'Back to exam bank' : 'Review submissions';
   if (mode === 'review') loadReviewQueue();
@@ -94,18 +103,29 @@ async function loadExamList() {
   if (bankMode() !== 'bank') return;
   const request = ++bankRequest;
   bankList.replaceChildren();
-  bankPreviewRequest++;
   hidePreview();
   const query = new URLSearchParams({
-    course: bankCourse.value,
+    course: courseKey(bankCourse.value),
     term: bankTerm.value,
     assessment: bankAssessment.value,
+    exact: location.hash.startsWith('#exam-bank/') ? '1' : '0',
   });
   bankStatus.textContent = 'Loading exams…';
   try {
-    const { exams, terms } = await (await bankFetch('exams?' + query)).json();
+    const { exams, terms, courses } = await (await bankFetch('exams?' + query)).json();
     if (request !== bankRequest) return;
     selectableTerms(terms);
+    const coursePage = location.hash.startsWith('#exam-bank/');
+    courseMatches.replaceChildren();
+    if (!coursePage) {
+      for (const match of courses) {
+        const link = document.createElement('a');
+        link.href = '#exam-bank/' + match.course;
+        link.textContent = courseLabel(match.course) + ' · ' + match.count + (match.count === 1 ? ' exam' : ' exams');
+        courseMatches.append(link);
+      }
+    }
+    courseMatches.hidden = !courseMatches.childElementCount;
     bankStatus.textContent = exams.length ? '' : 'No approved exams match these filters.';
     const groups = Map.groupBy(exams, exam => exam.course);
     for (const [course, entries] of groups) {
@@ -118,7 +138,8 @@ async function loadExamList() {
       const group = document.createElement('section');
       group.className = 'panel';
       for (const exam of entries) group.append(createExamEntry(exam));
-      bankList.append(heading, group);
+      if (!coursePage) bankList.append(heading);
+      bankList.append(group);
     }
   } catch (error) {
     if (request === bankRequest) bankStatus.textContent = error.message;
@@ -173,35 +194,14 @@ function createExamEntry(exam, review = false) {
   button.setAttribute('aria-controls', 'viewer');
   button.setAttribute('aria-expanded', 'false');
   const filePath = 'pdf/' + exam.id;
-  let loadedPdf;
-  let ranges;
   let onPreview;
   const feedback = document.createElement('p');
   feedback.className = 'bank-status';
   feedback.setAttribute('role', 'status');
-  button.addEventListener('click', async () => {
-    if (button === activePreview) {
-      hidePreview();
-      return;
-    }
-    const request = ++bankPreviewRequest;
-    button.disabled = true;
-    feedback.textContent = '';
-    try {
-      if (!loadedPdf) {
-        const response = await bankFetch(filePath);
-        ranges = JSON.parse(response.headers.get('X-Page-Images') || '[]');
-        if (!ranges.length) throw new Error('This PDF has no preview pages.');
-        loadedPdf = await response.blob();
-      }
-      if (request !== bankPreviewRequest) return;
-      showPdf(button, loadedPdf, ranges);
-      onPreview?.();
-    } catch (error) {
-      if (request === bankPreviewRequest) feedback.textContent = error.message;
-    } finally {
-      button.disabled = false;
-    }
+  button.addEventListener('click', () => {
+    const opening = button !== activePreview;
+    showPdf(button, '/api/bank/' + filePath + '?view=1');
+    if (opening) onPreview?.();
   });
   actions.append(button);
   article.append(title, details, actions, feedback);
@@ -264,7 +264,7 @@ bankTerm.addEventListener('change', loadExamList);
 bankAssessment.addEventListener('change', loadExamList);
 bankReview.addEventListener('click', () => { location.hash = bankMode() === 'review' ? 'exam-bank' : 'review'; });
 bankCourse.addEventListener('keydown', event => {
-  const course = bankCourse.value.toUpperCase().replace(/\s/g, '');
+  const course = courseKey(bankCourse.value);
   if (event.key === 'Enter' && /^[A-Z]{2,8}\d{3}[A-Z]?$/.test(course)) goToBankCourse(course);
 });
 window.addEventListener('hashchange', applyBankRoute);
@@ -321,13 +321,20 @@ function openContribution(source) {
   uploadCheck++;
   contributionSource = source;
   uploadAutofill = {};
+  duplicateRequest++;
+  duplicateNotice.hidden = true;
+  duplicateNotice.dataset.matches = '';
   contributionForm.reset();
+  document.querySelector('#contribution-attestation').textContent = source ?
+    'I have permission to share this blank exam.' :
+    'I checked that every page is blank and I have permission to share this exam.';
   document.querySelector('#upload-field').hidden = !!source;
   contributionFile.required = !source;
   contributionStatus.textContent = 'Check the details and fill in anything missing.';
   contributionSubmit.disabled = false;
   if (source) prefillContribution(inferMetadata(source.title));
   contribution.showModal();
+  scheduleDuplicateCheck();
 }
 
 document.querySelector('#bank-upload').addEventListener('click', () => openContribution());
@@ -337,6 +344,8 @@ contribution.addEventListener('cancel', event => {
 });
 contribution.addEventListener('close', () => {
   uploadCheck++;
+  duplicateRequest++;
+  clearTimeout(duplicateTimer);
   contributionSource = undefined;
   contributionForm.reset();
 });
@@ -361,6 +370,7 @@ contributionFile.addEventListener('change', async () => {
   const filename = file.name.replace(/\.pdf$/i, '');
   const prefilled = prefillContribution(inferMetadata(filename), uploadAutofill);
   uploadAutofill = prefilled;
+  scheduleDuplicateCheck();
   contributionStatus.textContent = 'Reading the first page…';
   contributionSubmit.disabled = true;
   try {
@@ -372,6 +382,7 @@ contributionFile.addEventListener('change', async () => {
       const text = content.items.map(item => item.str || '').join(' ');
       if (request !== uploadCheck) return;
       uploadAutofill = prefillContribution(inferMetadata(filename, text), prefilled);
+      scheduleDuplicateCheck();
       contributionStatus.textContent = 'Check the details and fill in anything missing.';
     } finally {
       await task.destroy();
@@ -413,6 +424,54 @@ async function renderUpload(file) {
   }
 }
 
+function submissionFields() {
+  const formData = new FormData(contributionForm);
+  return {
+    course: courseKey(formData.get('course')),
+    term: formData.get('year') + '-' + formData.get('season'),
+    assessment: formData.get('assessment'),
+    assessmentNumber: formData.get('assessmentNumber'),
+    blankConfirmed: formData.get('blankConfirmed') ? 'yes' : 'no',
+  };
+}
+
+async function checkSimilar(details) {
+  const request = ++duplicateRequest;
+  const { course, term, assessment, assessmentNumber } = details;
+  const valid = /^[A-Z]{2,8}\d{3}[A-Z]?$/.test(course) && /^\d{4}-[WSF]$/.test(term) && assessment;
+  const query = new URLSearchParams({ course, term, assessment, assessmentNumber });
+  const { exams } = valid ? await (await bankFetch('similar?' + query)).json() : { exams: [] };
+  if (request !== duplicateRequest || !contribution.open) return exams;
+  const key = [course, term, assessment, assessmentNumber, ...exams.map(exam => exam.id)].join('/');
+  if (key !== duplicateNotice.dataset.matches) {
+    duplicateConfirm.checked = false;
+    duplicateList.replaceChildren();
+    for (const exam of exams) {
+      const item = document.createElement('li');
+      const link = document.createElement('a');
+      link.href = '/api/bank/pdf/' + exam.id + '?view=1';
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = examLabel(exam) + ' · ' + termLabel(exam.term) + ' · ' + exam.page_count +
+        (exam.page_count === 1 ? ' page' : ' pages');
+      item.append(link);
+      duplicateList.append(item);
+    }
+    duplicateNotice.dataset.matches = key;
+  }
+  duplicateNotice.hidden = !exams.length;
+  return exams;
+}
+
+function scheduleDuplicateCheck() {
+  duplicateRequest++;
+  clearTimeout(duplicateTimer);
+  duplicateTimer = setTimeout(() => checkSimilar(submissionFields()).catch(() => {}), 220);
+}
+
+contributionForm.querySelector('.contribution-fields').addEventListener('input', scheduleDuplicateCheck);
+contributionForm.querySelector('.contribution-fields').addEventListener('change', scheduleDuplicateCheck);
+
 contributionForm.addEventListener('submit', async event => {
   event.preventDefault();
   if (contributionSubmit.disabled) return;
@@ -420,30 +479,38 @@ contributionForm.addEventListener('submit', async event => {
   const cancel = document.querySelector('#contribution-cancel');
   cancel.disabled = true;
   contributionForm.setAttribute('aria-busy', 'true');
-  contributionStatus.textContent = 'Preparing PDF…';
-  const details = new FormData(contributionForm);
+  const details = submissionFields();
   const source = contributionSource;
   try {
-    const images = source ? source.ranges.map(([offset, length]) =>
-      source.pdf.slice(offset, offset + length, 'image/jpeg')
-    ) : await renderUpload(contributionFile.files[0]);
-    const submission = new FormData();
-    submission.set('course', details.get('course'));
-    submission.set('term', details.get('year') + '-' + details.get('season'));
-    submission.set('assessment', details.get('assessment'));
-    submission.set('assessmentNumber', details.get('assessmentNumber'));
-    submission.set('blankConfirmed', 'yes');
-    images.forEach(image => submission.append('page', image, 'page.jpg'));
-    contributionStatus.textContent = 'Submitting for review…';
-    await bankFetch('submissions', { method: 'POST', body: submission });
+    clearTimeout(duplicateTimer);
+    const similar = await checkSimilar(details);
+    if (JSON.stringify(details) !== JSON.stringify(submissionFields())) {
+      throw new Error('The exam details changed. Check them and submit again.');
+    }
+    if (similar.length && !duplicateConfirm.checked) {
+      contributionStatus.textContent = 'Check the similar exams or confirm your copy is different.';
+      duplicateConfirm.focus();
+      return;
+    }
+    details.duplicateConfirmed = similar.length && duplicateConfirm.checked ? 'yes' : 'no';
+    if (source) {
+      contributionStatus.textContent = 'Submitting and preparing your PDF…';
+      await source.submit(details);
+    } else {
+      const images = await renderUpload(contributionFile.files[0]);
+      const submission = new FormData();
+      for (const [key, value] of Object.entries(details)) submission.set(key, value);
+      images.forEach(image => submission.append('page', image, 'page.jpg'));
+      contributionStatus.textContent = 'Submitting for review…';
+      await bankFetch('submissions', { method: 'POST', body: submission });
+    }
     contribution.close();
-    const message = 'Submitted. Your PDF is pending editor review.';
-    if (bankMode() === 'converter') {
+    if (source) {
       status.classList.remove('error');
-      status.textContent = message;
+      status.textContent = 'Submitted for review. Your PDF is ready to download.';
     } else {
       ++bankRequest;
-      bankStatus.textContent = message;
+      bankStatus.textContent = 'Submitted. Your PDF is pending editor review.';
     }
   } catch (error) {
     contributionStatus.textContent = error.message || 'The PDF could not be submitted.';

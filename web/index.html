@@ -117,36 +117,19 @@
     position: sticky;
     top: 1rem;
   }
-  .viewer-toolbar {
-    display: flex;
-    justify-content: center;
-    gap: .25rem;
-    margin-bottom: .65rem;
-  }
-  .viewer-toolbar button {
-    min-width: 2.75rem;
-    min-height: 2.75rem;
-    padding: .35rem .65rem;
-    font-variant-numeric: tabular-nums;
-  }
-  .viewer-toolbar button:disabled { cursor: default; }
-  #zoom-fit { min-width: 4.5rem; }
-  .pdf-preview {
-    width: 100%;
-    max-height: 70vh;
-    overflow: auto;
-    padding: .65rem;
-    border: 1px solid var(--border);
-    border-radius: .25rem;
-    background: var(--field);
-  }
-  .pdf-pages {
-    display: grid;
-    gap: .65rem;
-    width: var(--pdf-zoom, 100%);
-    margin-inline: auto;
-  }
-  .pdf-pages img { width: 100%; height: auto; display: block; background: white; }
+  .viewer-toolbar { display:flex; justify-content:flex-end; gap:.5rem; margin-bottom:.65rem; }
+  .viewer-toolbar a, .viewer-toolbar button { min-height:2.5rem; font-size:.875rem; padding:.4rem .75rem; }
+  .viewer-frame { width:100%; height:70vh; display:block; border:1px solid var(--border); background:var(--field); }
+  .viewer-message { margin:.25rem 0; color:var(--muted); }
+  .preview-selected { background:#282828; }
+  .bank-entry.preview-selected { box-shadow: -3px 0 var(--accent); }
+  .course-matches { display:flex; gap:.4rem; flex-wrap:wrap; margin-top:.55rem; }
+  .course-matches a { color:var(--text); font-size:.875rem; padding:.25rem .45rem; border:1px solid var(--border); }
+  .duplicate-notice { border:1px solid #555; padding:.65rem; font-size:.875rem; }
+  .duplicate-notice a { color:var(--text); }
+  .duplicate-notice ul { margin:.25rem 0; padding-left:1.25rem; }
+  .retry-form { display:flex; flex-wrap:wrap; gap:.55rem; margin-top:.6rem; }
+  .retry-form input { flex:1; min-width:12rem; }
   .site-nav {
     width: min(100%, 38rem);
     display: flex;
@@ -186,7 +169,10 @@
   @media (max-width: 28rem) { .bank-filters, .contribution-fields { grid-template-columns:1fr; } }
   @media (max-width: 50rem) {
     .workspace.split { display: grid; width: min(100%, 38rem); grid-template-columns: minmax(0, 1fr); }
-    .viewer { position: static; }
+    .viewer { position:fixed; inset:0; z-index:5; display:flex; flex-direction:column; background:var(--background); }
+    .viewer-toolbar { justify-content:space-between; }
+    .viewer-frame { min-height:0; height:auto; flex:1; }
+    body.pdf-open { overflow:hidden; }
   }
   @media (max-width: 30rem) {
     .actions > * { flex: 1; }
@@ -224,7 +210,7 @@
     <div class="panel">
       <div id="bank-filters" class="bank-filters">
         <label class="form-field">Course code
-          <input id="bank-course" type="search" placeholder="STAT 230" maxlength="16">
+          <input id="bank-course" type="search" placeholder="STAT 230" maxlength="24" autocomplete="off">
         </label>
         <label class="form-field">Term
           <select id="bank-term"><option value="">All terms</option></select>
@@ -233,6 +219,7 @@
           <select id="bank-assessment"><option value="">All types</option><option>Midterm</option><option>Final</option><option>Quiz</option><option>Test</option><option>Other</option></select>
         </label>
       </div>
+      <div class="course-matches" id="course-matches" aria-label="Matching courses" hidden></div>
       <div class="bank-actions">
         <button id="bank-upload" type="button">Contribute a PDF</button>
         <button class="secondary" id="bank-review" type="button">Review submissions</button>
@@ -244,14 +231,12 @@
   </section>
   </div>
   <section class="panel viewer" id="viewer" aria-label="PDF preview" hidden>
-    <div class="viewer-toolbar" role="group" aria-label="PDF zoom">
-      <button type="button" class="secondary" id="zoom-out" aria-label="Zoom out">−</button>
-      <button type="button" class="secondary" id="zoom-fit" aria-label="Fit to width, 100%" title="Fit to width">100%</button>
-      <button type="button" class="secondary" id="zoom-in" aria-label="Zoom in">+</button>
+    <div class="viewer-toolbar">
+      <button class="secondary" type="button" id="preview-back">Back</button>
+      <a class="download secondary" id="preview-open" target="_blank" rel="noopener noreferrer">Open PDF in new tab</a>
     </div>
-    <div class="pdf-preview" id="pdf-preview" role="region" aria-label="PDF pages" tabindex="0">
-      <div class="pdf-pages" id="pdf-pages"></div>
-    </div>
+    <p class="viewer-message" id="viewer-message" hidden>Open the PDF in a new tab to use your browser’s viewer.</p>
+    <iframe id="viewer-frame" class="viewer-frame" title="PDF preview"></iframe>
   </section>
 </div>
 </main>
@@ -278,8 +263,13 @@
         <input name="assessmentNumber" type="number" min="1" max="99" placeholder="2">
       </label>
     </div>
+    <div class="duplicate-notice" id="duplicate-notice" hidden>
+      <strong>Similar exams already in the bank</strong>
+      <ul id="duplicate-list"></ul>
+      <label class="check-row"><input type="checkbox" id="duplicate-confirm"> This copy is a different version or a clearer scan.</label>
+    </div>
     <p class="file-status" id="contribution-status" role="status"></p>
-    <label class="check-row"><input name="blankConfirmed" type="checkbox" required> I checked that every page is blank and I have permission to share this exam.</label>
+    <label class="check-row"><input name="blankConfirmed" type="checkbox" required> <span id="contribution-attestation">I checked that every page is blank and I have permission to share this exam.</span></label>
     <div class="bank-actions">
       <button class="secondary" type="button" id="contribution-cancel">Cancel</button>
       <button type="submit" id="contribution-submit">Submit for review</button>
@@ -296,9 +286,13 @@
   <section class="panel result">
     <h2></h2>
     <p class="details" role="status"></p>
+    <div class="retry-form" hidden>
+      <input type="url" aria-label="Crowdmark link to retry" placeholder="Correct the Crowdmark link">
+      <button type="button" class="secondary">Retry</button>
+    </div>
     <div class="actions" hidden>
       <button type="button" class="secondary" aria-expanded="false" aria-controls="viewer" hidden>Preview PDF</button>
-      <a class="download">Download PDF</a>
+      <a class="download" hidden>Download PDF</a>
       <button type="button" class="secondary contribute" hidden>Contribute to the exam bank</button>
     </div>
   </section>
@@ -314,37 +308,13 @@
   const template = document.querySelector('#result-template');
   const workspace = document.querySelector('#workspace');
   const viewer = document.querySelector('#viewer');
-  const preview = document.querySelector('#pdf-preview');
-  const pages = document.querySelector('#pdf-pages');
-  const zoomOut = document.querySelector('#zoom-out');
-  const zoomFit = document.querySelector('#zoom-fit');
-  const zoomIn = document.querySelector('#zoom-in');
+  const viewerFrame = document.querySelector('#viewer-frame');
+  const previewOpen = document.querySelector('#preview-open');
+  const previewBack = document.querySelector('#preview-back');
+  const viewerMessage = document.querySelector('#viewer-message');
   const objectUrls = new Set();
-  const pageUrls = [];
-  const minZoom = 50;
-  const maxZoom = 200;
-  const zoomStep = 25;
   let activePreview;
-  let zoom = 100;
-
-  function setZoom(percent) {
-    const next = Math.min(maxZoom, Math.max(minZoom, percent));
-    const scale = next / zoom;
-    const scrollTop = preview.scrollTop;
-    const horizontalCenter = preview.scrollLeft + preview.clientWidth / 2;
-    zoom = next;
-    pages.style.setProperty('--pdf-zoom', zoom + '%');
-    zoomFit.textContent = zoom + '%';
-    zoomFit.setAttribute('aria-label', 'Fit to width, current zoom ' + zoom + '%');
-    zoomOut.disabled = zoom === minZoom;
-    zoomIn.disabled = zoom === maxZoom;
-    preview.scrollTop = scrollTop * scale;
-    preview.scrollLeft = horizontalCenter * scale - preview.clientWidth / 2;
-  }
-
-  zoomOut.addEventListener('click', () => setZoom(zoom - zoomStep));
-  zoomFit.addEventListener('click', () => setZoom(100));
-  zoomIn.addEventListener('click', () => setZoom(zoom + zoomStep));
+  let previewScroll;
 
   function updateLinkLabels() {
     [...fields.children].forEach((row, index) => {
@@ -390,55 +360,54 @@
     return url;
   }
 
-  function hidePreview(returnFocus = false) {
+  function hidePreview(restorePosition = false) {
     if (!activePreview) return;
     const button = activePreview;
     activePreview = undefined;
     button.setAttribute('aria-expanded', 'false');
     button.textContent = 'Preview PDF';
+    button.closest('article, section')?.classList.remove('preview-selected');
     viewer.hidden = true;
+    viewerFrame.removeAttribute('src');
+    previewOpen.removeAttribute('href');
     workspace.classList.remove('split');
-    pages.replaceChildren();
-    for (const url of pageUrls.splice(0)) URL.revokeObjectURL(url);
-    if (returnFocus) button.focus();
+    document.body.classList.remove('pdf-open');
+    if (restorePosition) {
+      button.focus({ preventScroll: true });
+      window.scrollTo(0, previewScroll);
+    }
   }
 
-  viewer.addEventListener('keydown', (event) => {
+  previewBack.addEventListener('click', () => hidePreview(true));
+  viewer.addEventListener('keydown', event => {
     if (event.key === 'Escape') hidePreview(true);
   });
 
-  function wirePreview(button, pdf, ranges, first) {
-    if (!ranges.length) return;
-    button.hidden = false;
-    button.addEventListener('click', () => showPdf(button, pdf, ranges, first));
-  }
-
-  function showPdf(button, pdf, ranges, first = 1) {
+  function showPdf(button, url) {
     if (button === activePreview) {
-      hidePreview();
+      hidePreview(true);
       return;
     }
+    if (!activePreview) previewScroll = window.scrollY;
     hidePreview();
     activePreview = button;
     button.setAttribute('aria-expanded', 'true');
     button.textContent = 'Hide preview';
-    ranges.forEach(([offset, length], index) => {
-      const page = document.createElement('img');
-      page.loading = index === 0 ? 'eager' : 'lazy';
-      page.alt = 'Booklet page ' + (first + index);
-      const url = URL.createObjectURL(pdf.slice(offset, offset + length, 'image/jpeg'));
-      pageUrls.push(url);
-      page.src = url;
-      pages.append(page);
-    });
+    const row = button.closest('article, section');
+    row?.classList.add('preview-selected');
+    previewOpen.href = url;
+    const embedsPdfs = navigator.pdfViewerEnabled !== false;
+    viewerFrame.hidden = !embedsPdfs;
+    viewerMessage.hidden = embedsPdfs;
+    if (embedsPdfs) viewerFrame.src = url;
     viewer.hidden = false;
     workspace.classList.add('split');
-    setZoom(100);
-    preview.scrollTo(0, 0);
-    if (matchMedia('(max-width: 50rem)').matches) viewer.scrollIntoView({ block: 'start' });
+    document.body.classList.add('pdf-open');
+    if (matchMedia('(max-width: 50rem)').matches) previewBack.focus({ preventScroll: true });
+    else row?.scrollIntoView({ block: 'nearest' });
   }
 
-  function addResult(index) {
+  function addResult(index, link) {
     const card = template.content.firstElementChild.cloneNode(true);
     const title = card.querySelector('h2');
     const details = card.querySelector('.details');
@@ -446,13 +415,28 @@
     const previewButton = actions.querySelector('button');
     const download = actions.querySelector('a');
     const contribute = actions.querySelector('.contribute');
+    const retryGroup = card.querySelector('.retry-form');
+    const retryLink = retryGroup.querySelector('input');
+    const retry = retryGroup.querySelector('button');
+    retryLink.value = link;
+    retryLink.setAttribute('aria-label', 'Crowdmark link for assessment ' + (index + 1));
 
     title.id = 'assessment-' + (index + 1);
     title.textContent = 'Assessment ' + (index + 1);
     card.setAttribute('aria-labelledby', title.id);
     details.textContent = 'Waiting…';
     results.append(card);
-    return { title, details, actions, previewButton, download, contribute };
+    const row = { card, title, details, actions, previewButton, download, contribute, retryGroup, retry };
+    retry.addEventListener('click', async () => {
+      if (await prepareAssessment(retryLink.value.trim(), row)) summarizeBatch();
+    });
+    retryLink.addEventListener('keydown', event => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        retry.click();
+      }
+    });
+    return row;
   }
 
   async function getBlankReferences(link) {
@@ -497,49 +481,73 @@
     }
   }
 
+  async function requestExport(link, contribution) {
+    const template = await getBlankReferences(link);
+    const response = await fetch('/api/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ link, template, prepare: !contribution, contribution }),
+      signal: AbortSignal.timeout(60000),
+    });
+    if (!response.ok) {
+      const info = await response.json().catch(() => null);
+      throw new Error(info?.error || 'The export service could not finish. Try again.');
+    }
+    return response;
+  }
+
+  async function unlockConverterExport(link, row, contribution) {
+    const response = await requestExport(link, contribution);
+    if (!response.headers.get('Content-Type')?.startsWith('application/pdf')) {
+      throw new Error('The export service returned an unexpected response.');
+    }
+    const filename = /filename="([^"]+)"/.exec(response.headers.get('Content-Disposition') || '')?.[1];
+    const pdf = await response.blob();
+    if (!row.card.isConnected) return;
+    const url = objectUrl(pdf);
+    row.previewButton.hidden = false;
+    row.previewButton.addEventListener('click', () => showPdf(row.previewButton, url));
+    row.download.href = url;
+    row.download.download = filename || 'crowdmark-assessment-blank.pdf';
+    row.download.hidden = false;
+    row.contribute.hidden = true;
+    row.details.textContent = row.summary;
+  }
+
   async function prepareAssessment(link, row) {
-    row.details.textContent = 'Fetching blank pages…';
+    row.retry.disabled = true;
+    row.details.classList.remove('error');
+    row.details.textContent = 'Finding blank pages…';
     try {
-      const template = await getBlankReferences(link);
-      const response = await fetch('/api/export', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ link, template }),
-        signal: AbortSignal.timeout(60000),
-      });
-      if (!response.ok) {
-        const info = await response.json().catch(() => null);
-        throw new Error(info?.error || 'The export service could not finish. Try again.');
-      }
-      if (!response.headers.get('Content-Type')?.startsWith('application/pdf')) {
-        throw new Error('The export service returned an unexpected response.');
-      }
-
-      const title = decodeURIComponent(response.headers.get('X-Assessment-Title') || 'Crowdmark assessment');
-      const first = Number(response.headers.get('X-First-Page'));
-      const last = Number(response.headers.get('X-Last-Page'));
-      const count = Number(response.headers.get('X-Page-Count'));
-      const filename = /filename="([^"]+)"/.exec(response.headers.get('Content-Disposition') || '')?.[1];
-      const ranges = JSON.parse(response.headers.get('X-Page-Images') || '[]');
-      const pdf = await response.blob();
-
+      const { title, first, last, count } = await (await requestExport(link)).json();
+      if (!row.card.isConnected) return false;
       row.title.textContent = title;
-      row.details.textContent = count + (count === 1 ? ' blank page.' : ' blank pages.') +
+      row.summary = count + (count === 1 ? ' blank page.' : ' blank pages.') +
         (first > 1 ? ' Crowdmark supplied booklet pages ' + (first === last ? first : first + '–' + last) + '.' : '');
-      if (Array.isArray(ranges)) wirePreview(row.previewButton, pdf, ranges, first);
-      if (Array.isArray(ranges) && ranges.length) {
-        row.contribute.hidden = false;
-        row.contribute.addEventListener('click', () => openContribution({ title, pdf, ranges }));
-      }
-      row.download.href = objectUrl(pdf);
-      row.download.download = filename || 'crowdmark-assessment-blank.pdf';
+      row.details.textContent = row.summary + ' Contribute to unlock the PDF.';
+      row.contribute.hidden = false;
+      row.contribute.addEventListener('click', () => openContribution({
+        title,
+        submit: details => unlockConverterExport(link, row, details),
+      }));
+      row.retryGroup.hidden = true;
       row.actions.hidden = false;
       return true;
     } catch (error) {
       row.details.classList.add('error');
-      row.details.textContent = error.name === 'TimeoutError' ? 'The export timed out. Try again.' : error.message;
+      row.retryGroup.hidden = false;
+      row.details.textContent = error.name === 'TimeoutError' ? 'The request timed out. Try again.' : error.message;
       return false;
+    } finally {
+      row.retry.disabled = false;
     }
+  }
+
+  function summarizeBatch() {
+    if (prepare.disabled || results.childElementCount < 2) return;
+    const total = results.childElementCount;
+    const found = results.querySelectorAll('.actions:not([hidden])').length;
+    status.textContent = found + ' of ' + total + ' assessments found.';
   }
 
   form.addEventListener('submit', async (event) => {
@@ -557,24 +565,23 @@
     results.replaceChildren();
     for (const url of objectUrls) URL.revokeObjectURL(url);
     objectUrls.clear();
-    const rows = links.map((_, index) => addResult(index));
+    const rows = links.map((link, index) => addResult(index, link));
     prepare.disabled = true;
     prepare.textContent = 'Preparing…';
     status.textContent = '';
 
     let next = 0;
-    let succeeded = 0;
     async function runQueue() {
       while (next < links.length) {
         const index = next++;
-        if (await prepareAssessment(links[index], rows[index])) succeeded++;
+        await prepareAssessment(links[index], rows[index]);
       }
     }
     await Promise.all(Array.from({ length: Math.min(3, links.length) }, runQueue));
 
     prepare.disabled = false;
     prepare.textContent = 'Prepare PDFs';
-    if (links.length > 1) status.textContent = succeeded + ' of ' + links.length + ' PDFs ready.';
+    summarizeBatch();
   });
 
   fields.addEventListener('input', () => {

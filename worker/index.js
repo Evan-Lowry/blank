@@ -101,7 +101,7 @@ async function readBytes(response, limit) {
   return bytes;
 }
 
-async function exportAssessment(request) {
+async function exportAssessment(request, env) {
   const body = await readBytes(new Response(request.body, { headers: request.headers }), 48 * 1024);
   let input;
   try {
@@ -110,6 +110,17 @@ async function exportAssessment(request) {
     throw new ExportError(400, 'Paste a valid Crowdmark results link.');
   }
   const id = scoreId(input?.link);
+  const preparing = input?.prepare === true;
+  const details = validateExam(input?.contribution);
+  if (!preparing) {
+    if (!details || input.contribution.blankConfirmed !== 'yes') {
+      throw new ExportError(422, 'Contribute the exam before downloading this PDF.');
+    }
+    if (!env.DB || !env.BUCKET) throw new ExportError(503, 'The exam bank is currently unavailable.');
+    if (input.contribution.duplicateConfirmed !== 'yes' && (await comparableExams(details, env)).length) {
+      throw new ExportError(409, 'Similar exams already exist. Check them before contributing this copy.');
+    }
+  }
   let payload = input.template;
   if (payload?.data?.id !== id) {
     const response = await upstream(crowdmarkOrigin + '/api/v1/student/results/' + id, {
@@ -122,6 +133,11 @@ async function exportAssessment(request) {
     payload = JSON.parse(new TextDecoder().decode(await readBytes(response, 4 * 1024 * 1024)));
   }
   const { ordered, title } = templatePages(payload);
+  if (preparing) {
+    return Response.json({ title, count: ordered.length, first: ordered[0][0], last: ordered.at(-1)[0] }, {
+      headers: privateHeaders,
+    });
+  }
   const images = [];
   let total = 0;
   for (let start = 0; start < ordered.length; start += 4) {
@@ -136,10 +152,12 @@ async function exportAssessment(request) {
     for (const image of files) {
       total += image.length;
       if (total > 24 * 1024 * 1024) throw new ExportError(422, 'This booklet exceeds the 24 MB export limit.');
-      images.push(image);
+      images.push(cleanJpeg(image));
     }
   }
-  const { pdf, pageImages } = makePdf(images);
+  const rendered = makePdf(images);
+  await savePendingExam(details, rendered, env);
+  const { pdf, pageImages } = rendered;
   const filename = (title.replace(/[^a-z\d]+/gi, '-').replace(/^-|-$/g, '') || 'crowdmark-assessment') + '-blank.pdf';
   return new Response(pdf, { headers: {
     ...privateHeaders,
@@ -176,7 +194,7 @@ export default {
       return new Response(HTML, { headers: {
         'Content-Type': 'text/html; charset=utf-8',
         'Referrer-Policy': 'no-referrer',
-        'Content-Security-Policy': "default-src 'none'; script-src 'self' 'unsafe-inline'; worker-src 'self'; style-src 'unsafe-inline'; img-src 'self' blob:; connect-src 'self' https://app.crowdmark.com; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+        'Content-Security-Policy': "default-src 'none'; script-src 'self' 'unsafe-inline'; worker-src 'self'; frame-src 'self' blob:; style-src 'unsafe-inline'; img-src 'self' blob:; connect-src 'self' https://app.crowdmark.com; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
         ...privateHeaders,
       } });
     }
@@ -186,7 +204,7 @@ export default {
       return new Response('Forbidden', { status: 403 });
     }
     try {
-      return await exportAssessment(request);
+      return await exportAssessment(request, env);
     } catch (error) {
       const known = error instanceof ExportError;
       return Response.json({ error: known ? error.message : 'The blank pages couldn’t be downloaded from Crowdmark. Try again in a moment.' }, {
