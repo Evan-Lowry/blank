@@ -9,6 +9,7 @@ const examKinds = {
   Assignment: /\bASSIGNMENTS?\b|\bHOMEWORK\b|\bPROBLEM[ -]SET\b|\bPS[ -]?\d+\b|\bHW[ -]?\d+\b|\bA[ -]?\d+\b/,
   Lab: /\bLABS?\b|\bLABORATOR(?:Y|IES)\b/,
   Tutorial: /\bTUTORIALS?\b/,
+  Workshop: /\bWORKSHOPS?\b/,
   Project: /\bPROJECTS?\b/,
   Practice: /\bPRACTICE\b|\bMOCK\b|\bSAMPLE[ -]+(?:MID[ -]?TERM|FINAL|EXAM|TEST|QUIZ)\b/,
 };
@@ -39,10 +40,24 @@ function detectFromLabel(label) {
     kinds = kinds.filter(kind => kind !== 'Exam' && kind !== 'Test');
   }
   const assessment = uniqueMatch(kinds);
-  const numbers = [...text.matchAll(/\b(MID[ -]?TERM|FINAL|QUIZ|TEST|EXAM|ASSIGNMENT|HOMEWORK|PROBLEM[ -]SET|LAB|TUTORIAL|PROJECT|HW|PS|A)[ -]*(?:#|NO\.?[ -]*)?([1-9]\d?)\b/g)]
+  const numbers = [...text.matchAll(/\b(MID[ -]?TERM|FINAL|QUIZ|TEST|EXAM|ASSIGNMENT|HOMEWORK|PROBLEM[ -]SET|LAB|TUTORIAL|WORKSHOP|PROJECT|HW|PS|A)[ -]*(?:#|NO\.?[ -]*)?([1-9]\d?)\b/g)]
     .filter(match => assessment && (assessment === 'Practice' || examKinds[assessment].test(match[1] + ' ' + match[2])))
     .map(match => match[2]);
   return { course: uniqueMatch(courses), term: uniqueMatch(terms), assessment, number: uniqueMatch(numbers) || null };
+}
+
+// The booklet name alone is sometimes not enough (for example "workshop-3-e2525"). Crowdmark's own course name
+// ("STAT 230 - Fall 2026") and assessment title fill in whatever the booklet name did not give.
+function detectDetails(booklet, extra) {
+  const details = detectFromLabel(booklet);
+  if (details.course && details.term && details.assessment) return details;
+  const more = detectFromLabel(extra);
+  return {
+    course: details.course || more.course,
+    term: details.term || more.term,
+    assessment: details.assessment || more.assessment,
+    number: details.assessment ? details.number : more.number,
+  };
 }
 
 const entryId = '[a-f0-9-]{36}';
@@ -178,11 +193,21 @@ async function saveExam(details, rendered, env) {
   if (existing?.status !== 'approved') {
     existing = await findLegacyMatch(rendered, pageImages, hash, Boolean(existing), env) || existing;
   }
-  if (existing) return { id: existing.id, status: existing.status === 'approved' ? 'duplicate' : 'unlisted', published: existing.status === 'approved' };
-
   // Only assessments whose course, term, and type were all recognised are added to the public bank. The rest are stored
   // hidden (status 'pending') so the person who converted still gets a preview and download.
   const recognised = Boolean(details.course && details.term && details.assessment);
+  if (existing) {
+    // A hidden copy of the same PDF is published once it is recognised. Removed ('rejected') copies stay removed.
+    if (existing.status === 'pending' && recognised) {
+      await checkPublishLimits(env);
+      const promoted = await env.DB.prepare(
+        "UPDATE exam_bank SET course = ?, term = ?, assessment = ?, assessment_number = ?, status = 'approved' WHERE id = ? AND status = 'pending'"
+      ).bind(details.course, details.term, details.assessment, details.number ? Number(details.number) : null, existing.id).run();
+      if (promoted.meta.changes) return { id: existing.id, status: 'published', published: true };
+    }
+    return { id: existing.id, status: existing.status === 'approved' ? 'duplicate' : 'unlisted', published: existing.status === 'approved' };
+  }
+
   await checkPublishLimits(env);
   const id = crypto.randomUUID();
   const key = 'exams/' + id + '.pdf';

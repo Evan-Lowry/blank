@@ -113,6 +113,27 @@ async function readBytes(response, limit) {
   return bytes;
 }
 
+async function fetchResults(id) {
+  const response = await upstream(crowdmarkOrigin + '/api/v1/student/results/' + id, {
+    headers: { Accept: 'application/json' },
+  });
+  if ([401, 403, 404].includes(response.status)) {
+    throw new ExportError(404, 'Crowdmark couldn’t open this assessment. Check that the shareable results link opens while signed out.');
+  }
+  if (!response.ok) throw new Error('Crowdmark response failed.');
+  return JSON.parse(new TextDecoder().decode(await readBytes(response, 4 * 1024 * 1024)));
+}
+
+// The course name ("STAT 230 - Fall 2026") and assessment title that came with the results, used only to fill in
+// whatever the booklet name did not give. The pages themselves always come from Crowdmark's own asset host.
+function crowdmarkLabels(payload) {
+  const included = Array.isArray(payload?.included) ? payload.included : [];
+  const text = value => (typeof value === 'string' ? value.slice(0, 120) : '');
+  const course = text(included.find(item => item.type === 'courses')?.attributes?.name);
+  const title = text(included.find(item => item.type === 'exam-masters')?.attributes?.title);
+  return course + ' ' + title;
+}
+
 async function exportAssessment(request, env) {
   const body = await readBytes(new Response(request.body, { headers: request.headers }), 48 * 1024);
   let input;
@@ -132,16 +153,7 @@ async function exportAssessment(request, env) {
   const unverified = await verifyTurnstile(request, env, input.turnstileToken);
   if (unverified) throw new ExportError(unverified.status, unverified.message);
   let payload = input.template;
-  if (payload?.data?.id !== id) {
-    const response = await upstream(crowdmarkOrigin + '/api/v1/student/results/' + id, {
-      headers: { Accept: 'application/json' },
-    });
-    if ([401, 403, 404].includes(response.status)) {
-      throw new ExportError(404, 'Crowdmark couldn’t open this assessment. Check that the shareable results link opens while signed out.');
-    }
-    if (!response.ok) throw new Error('Crowdmark response failed.');
-    payload = JSON.parse(new TextDecoder().decode(await readBytes(response, 4 * 1024 * 1024)));
-  }
+  if (payload?.data?.id !== id) payload = await fetchResults(id);
   const { ordered, booklet } = templatePages(payload);
   const images = [];
   let total = 0;
@@ -160,7 +172,8 @@ async function exportAssessment(request, env) {
       images.push(cleanJpeg(image));
     }
   }
-  const details = detectFromLabel(booklet);
+  let details = detectFromLabel(booklet);
+  if (!(details.course && details.term && details.assessment)) details = detectDetails(booklet, crowdmarkLabels(payload));
   const rendered = makePdf(images);
   const entry = await saveExam(details, rendered, env);
   const { pdf, pageImages } = rendered;

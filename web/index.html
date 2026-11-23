@@ -355,7 +355,7 @@
     <div class="bank-head">
         <h1 id="bank-heading">Assessment Bank</h1>
     <div class="bank-toolbar" id="bank-toolbar" hidden>
-      <select id="bank-assessment" aria-label="Type"><option value="">All types</option><option>Midterm</option><option>Final</option><option>Quiz</option><option>Test</option><option>Exam</option><option>Assignment</option><option>Lab</option><option>Tutorial</option><option>Project</option><option>Practice</option><option>Other</option></select>
+      <select id="bank-assessment" aria-label="Type"><option value="">All types</option><option>Midterm</option><option>Final</option><option>Quiz</option><option>Test</option><option>Exam</option><option>Assignment</option><option>Lab</option><option>Tutorial</option><option>Workshop</option><option>Project</option><option>Practice</option><option>Other</option></select>
       <button class="secondary" id="bank-share" type="button" hidden>Share</button>
       <button class="secondary" id="bank-zip" type="button" hidden>Download all</button>
     </div>
@@ -779,6 +779,9 @@
           return { id, type, attributes: { number, url } };
         });
 
+      // The course name (for example "STAT 230 - Fall 2026") helps recognise booklets whose own name says little.
+      const course = included.find(item => item.type === 'courses');
+      const courseName = Array.isArray(course?.attributes) ? course.attributes[0]?.name : course?.attributes?.name;
       return {
         data: { id, relationships: { 'exam-master': { data: masterRef } } },
         included: [{
@@ -786,7 +789,7 @@
           type: master.type,
           attributes: { title: master.attributes?.title },
           relationships: { 'exam-master-pages': { data: pageRefs } },
-        }, ...pages],
+        }, ...pages, ...(typeof courseName === 'string' ? [{ id: course.id, type: 'courses', attributes: { name: courseName } }] : [])],
       };
     } catch {
       // The server can also retrieve the public results response.
