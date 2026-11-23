@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="Get the blank pages from a Crowdmark results link, and browse a Waterloo assessment bank.">
 <title>blank. · Blank PDFs and assessment bank</title>
-<meta name="clean-copy-api" content="">
+<meta name="turnstile-site-key" content="">
 <link rel="icon" href="./favicon.svg" type="image/svg+xml">
 <style>
   :root {
@@ -187,6 +187,7 @@
   .result.preview-selected .download { display: none; }
 
   /* viewer */
+  .turnstile-holder { position: fixed; right: 1rem; bottom: 1rem; z-index: 40; }
   .viewer { position: sticky; top: 1rem; display: flex; flex-direction: column; height: calc(100dvh - 9.25rem); min-height: 22rem; padding: .5rem; }
   .viewer-frame { width: 100%; flex: 1; min-height: 0; display: block; border: 0; border-radius: .4rem; background: var(--field); }
   .viewer-message { margin: .5rem; color: var(--muted); font-size: .9rem; }
@@ -444,7 +445,50 @@
   </section>
 </template>
 <script>
-  const apiBase = document.querySelector('meta[name="clean-copy-api"]').content;
+  const turnstileKey = document.querySelector('meta[name="turnstile-site-key"]').content;
+  let turnstileScript;
+
+  function loadTurnstile() {
+    turnstileScript ||= new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+      script.async = true;
+      script.onload = () => resolve(window.turnstile);
+      script.onerror = () => {
+        turnstileScript = undefined;
+        reject(new Error('Couldn’t load the verification check. Check your connection and try again.'));
+      };
+      document.head.append(script);
+    });
+    return turnstileScript;
+  }
+
+  // A fresh one-time Turnstile token for each request. It stays invisible unless Cloudflare needs more proof.
+  // With no site key configured (local development, or a deployment without Turnstile) this returns '' and nothing runs.
+  async function getTurnstileToken() {
+    if (!turnstileKey) return '';
+    const turnstile = await loadTurnstile();
+    return new Promise((resolve, reject) => {
+      const holder = document.createElement('div');
+      holder.className = 'turnstile-holder';
+      document.body.append(holder);
+      let widget;
+      let timer;
+      const finish = (settle, value) => {
+        clearTimeout(timer);
+        if (widget !== undefined) turnstile.remove(widget);
+        holder.remove();
+        settle(value);
+      };
+      timer = setTimeout(() => finish(reject, new Error('The verification check timed out. Try again.')), 60000);
+      widget = turnstile.render(holder, {
+        sitekey: turnstileKey,
+        appearance: 'interaction-only',
+        callback: token => finish(resolve, token),
+        'error-callback': () => finish(reject, new Error('Verification failed. Reload the page and try again.')),
+      });
+    });
+  }
   const form = document.querySelector('#export-form');
   const fields = document.querySelector('#links');
   const linkTemplate = document.querySelector('#link-template');
@@ -704,10 +748,11 @@
 
   async function requestExport(link) {
     const template = await getBlankReferences(link);
-    const response = await fetch(apiBase + '/api/export', {
+    const turnstileToken = await getTurnstileToken();
+    const response = await fetch('/api/export', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ link, template, submitForReview: true, nativePreview: true }),
+      body: JSON.stringify({ link, template, submitForReview: true, nativePreview: true, turnstileToken }),
       signal: AbortSignal.timeout(60000),
     });
     if (!response.ok) {
@@ -741,7 +786,7 @@
       row.details.textContent = count + (count === 1 ? ' blank page' : ' blank pages') +
         (first > 1 ? ' · Booklet pages ' + (first === last ? first : first + '–' + last) : '') +
         (bankStatus === 'published' ? ' · Added to the assessment bank' : published ? ' · Already in the assessment bank' : ' · Not added to the bank (couldn’t read the course, term, or type)');
-      row.openPreview = () => showPdf(row.previewButton, apiBase + previewPath);
+      row.openPreview = () => showPdf(row.previewButton, previewPath);
       row.previewButton.hidden = false;
       row.previewButton.addEventListener('click', row.openPreview);
       row.download.hidden = false;

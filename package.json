@@ -4,13 +4,11 @@
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "build:pages": "node scripts/build.mjs --pages",
-    "dev": "node scripts/serve.mjs",
-    "cf:dev": "npm run build && wrangler dev",
-    "cf:db:local": "wrangler d1 migrations apply blank --local",
-    "cf:db:remote": "wrangler d1 migrations apply blank --remote",
+    "dev": "npm run build && wrangler dev --local",
+    "db:local": "wrangler d1 migrations apply blank --local",
+    "db:remote": "wrangler d1 migrations apply blank --remote",
     "deploy": "npm run build && wrangler deploy",
-    "cf:push-local": "node scripts/push-local.mjs"
+    "reports": "wrangler d1 execute blank --remote --command \"SELECT e.id, e.course, e.term, e.assessment, e.assessment_number, r.reason, COUNT(*) AS reports, MAX(r.created_at) AS latest FROM exam_reports r JOIN exam_bank e ON e.id = r.exam_id GROUP BY e.id, r.reason ORDER BY latest DESC LIMIT 50\""
   },
   "dependencies": {
     "fflate": "0.8.3"

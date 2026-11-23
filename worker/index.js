@@ -1,27 +1,19 @@
 import { makePdf } from './pdf.js';
 
 const crowdmarkOrigin = 'https://app.crowdmark.com';
-const githubPagesOrigin = 'https://evan-lowry.github.io';
-const publicPagesEndpoint = /^\/api\/(?:export|bank\/(?:exams|pdf\/[a-f0-9-]{36}))$/;
-const pagesHeaders = {
-  'Access-Control-Allow-Origin': githubPagesOrigin,
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
-  'Access-Control-Expose-Headers': 'Content-Disposition, X-Assessment-Title, X-Bank-Status, X-Bank-Published, X-PDF-Preview, X-Page-Count, X-First-Page, X-Last-Page',
-  'Vary': 'Origin',
-};
-
+// Writes must come from this site's own pages. (The Origin header can be faked by a script, which is why the
+// guards in guard.js, not this check, are what actually limit abuse.)
 function allowedWriteOrigin(request, url) {
-  const inbound = request.headers.get('origin');
-  return inbound === url.origin || (inbound === githubPagesOrigin && publicPagesEndpoint.test(url.pathname));
+  return request.headers.get('origin') === url.origin;
 }
 const scorePath = /^\/score\/([a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})\/?$/i;
 const privateHeaders = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
 
 class ExportError extends Error {
-  constructor(status, message) {
+  constructor(status, message, headers = {}) {
     super(message);
     this.status = status;
+    this.headers = headers;
   }
 }
 
@@ -132,6 +124,11 @@ async function exportAssessment(request, env) {
     throw new ExportError(422, 'Refresh blank. before preparing this PDF.');
   }
   if (!env.DB || !env.BUCKET) throw new ExportError(503, 'The assessment bank is currently unavailable.');
+  // Both guards run before anything is requested from Crowdmark.
+  const limited = await rateLimit(request, env, 'export');
+  if (limited) throw new ExportError(429, limited.message, { 'Retry-After': String(limited.retryAfter) });
+  const unverified = await verifyTurnstile(request, env, input.turnstileToken);
+  if (unverified) throw new ExportError(unverified.status, unverified.message);
   let payload = input.template;
   if (payload?.data?.id !== id) {
     const response = await upstream(crowdmarkOrigin + '/api/v1/student/results/' + id, {
@@ -212,10 +209,13 @@ async function handleRequest(request, env) {
     } });
   }
   if (pathname === '/' && request.method === 'GET') {
-    return new Response(HTML, { headers: {
+    // The Turnstile site key is public config. The challenge host is only allowed by the page's CSP when a key is set.
+    const siteKey = turnstileSiteKey(env);
+    const challenge = siteKey ? ' https://challenges.cloudflare.com' : '';
+    return new Response(siteKey ? HTML.replace('name="turnstile-site-key" content=""', 'name="turnstile-site-key" content="' + siteKey + '"') : HTML, { headers: {
       'Content-Type': 'text/html; charset=utf-8',
       'Referrer-Policy': 'no-referrer',
-      'Content-Security-Policy': "default-src 'none'; script-src 'self' 'unsafe-inline'; worker-src 'self'; frame-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self' https://app.crowdmark.com; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+      'Content-Security-Policy': "default-src 'none'; script-src 'self' 'unsafe-inline'" + challenge + "; worker-src 'self'; frame-src 'self' blob:" + challenge + "; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self' https://app.crowdmark.com" + challenge + "; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
       ...privateHeaders,
     } });
   }
@@ -230,20 +230,11 @@ async function handleRequest(request, env) {
     const known = error instanceof ExportError;
     return Response.json({ error: known ? error.message : 'The blank pages couldn’t be downloaded from Crowdmark. Try again in a moment.' }, {
       status: known ? error.status : 502,
-      headers: privateHeaders,
+      headers: { ...privateHeaders, ...(known ? error.headers : {}) },
     });
   }
 }
 
 export default {
-  async fetch(request, env = {}) {
-    const url = new URL(request.url);
-    const fromPages = request.headers.get('origin') === githubPagesOrigin && publicPagesEndpoint.test(url.pathname);
-    if (request.method === 'OPTIONS' && fromPages) return new Response(null, { status: 204, headers: pagesHeaders });
-    const response = await handleRequest(request, env);
-    if (!fromPages) return response;
-    const headers = new Headers(response.headers);
-    for (const [name, value] of Object.entries(pagesHeaders)) headers.set(name, value);
-    return new Response(response.body, { status: response.status, headers });
-  },
+  fetch: (request, env = {}) => handleRequest(request, env),
 };

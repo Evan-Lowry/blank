@@ -56,28 +56,12 @@ function bankError(message, status = 400) {
   return bankJson({ error: message }, status);
 }
 
-function isBankEditor(request, env) {
-  const email = request.headers.get('oai-authenticated-user-email')?.trim().toLowerCase();
-  return !!(email && request.headers.get('oai-authenticated-user-id') &&
-    env.EXAM_BANK_EDITORS?.split(',').some(editor => editor.trim().toLowerCase() === email));
-}
-
 function normalizedCourse(value) {
   return String(value || '').trim().toUpperCase().replace(/[\s-]+/g, '');
 }
 
 function validTerm(value) {
   return /^(?:19|20)\d{2}-[WSF]$/.test(value);
-}
-
-function validateExam(fields) {
-  const course = normalizedCourse(fields?.course);
-  const term = String(fields?.term || '');
-  const assessment = String(fields?.assessment || '');
-  const numberText = String(fields?.assessmentNumber || '').trim();
-  if (!/^[A-Z]{2,8}\d{3}[A-Z]?$/.test(course) || !validTerm(term) ||
-      !assessmentTypes.has(assessment) || (numberText && !/^[1-9]\d?$/.test(numberText))) return;
-  return { course, term, assessment, number: numberText ? Number(numberText) : null };
 }
 
 // Retain image data and decoding tables. Drop JPEG metadata and bytes after the end marker.
@@ -256,11 +240,11 @@ async function listExams(url, env) {
   return bankJson({ exams, terms: terms.map(row => row.term), courses });
 }
 
-async function getBankPdf(id, editor, inline, env) {
+async function getBankPdf(id, inline, env) {
   const entry = await env.DB.prepare(
     'SELECT ' + bankFields + ', page_images, status FROM exam_bank WHERE id = ?'
   ).bind(id).first();
-  if (!entry || (entry.status !== 'approved' && !(editor && entry.status === 'pending'))) {
+  if (!entry || entry.status !== 'approved') {
     return bankError('Assessment not found.', 404);
   }
   const filename = ([entry.course, entry.term, entry.assessment, entry.assessment_number].filter(Boolean).join('-') || 'pending-blank-assessment') + '.pdf';
@@ -328,6 +312,8 @@ async function handleSync(request, url, env) {
     }
   }
   if (mode === 'POST') {
+    const limited = await rateLimit(request, env, 'sync-create');
+    if (limited) return Response.json({ error: limited.message }, { status: 429, headers: { ...bankHeaders, 'Retry-After': String(limited.retryAfter) } });
     const limit = Number(env.MAX_DAILY_SYNC_PROFILES);
     const maxDaily = Number.isFinite(limit) && env.MAX_DAILY_SYNC_PROFILES !== '' && env.MAX_DAILY_SYNC_PROFILES !== undefined ? limit : 500;
     const today = await env.DB.prepare("SELECT COUNT(*) AS n FROM sync_profiles WHERE created_at > datetime('now', '-1 day')").first();
@@ -366,7 +352,11 @@ async function handleSync(request, url, env) {
 const reportReasons = new Set(['student-work', 'wrong-details', 'other']);
 
 async function reportExam(request, env) {
+  const limited = await rateLimit(request, env, 'report');
+  if (limited) return Response.json({ error: limited.message }, { status: 429, headers: { ...bankHeaders, 'Retry-After': String(limited.retryAfter) } });
   const input = await request.json().catch(() => null);
+  const unverified = await verifyTurnstile(request, env, input?.turnstileToken);
+  if (unverified) return bankError(unverified.message, unverified.status);
   if (!new RegExp('^' + entryId + '$').test(input?.id) || !reportReasons.has(input?.reason)) {
     return bankError('Choose what is wrong with this assessment.');
   }
@@ -383,12 +373,6 @@ async function handleExamBank(request, url, env) {
   const path = url.pathname;
   const mode = request.method;
   if (mode === 'POST' && !allowedWriteOrigin(request, url)) return bankError('Forbidden.', 403);
-  const editor = request.headers.get('origin') !== githubPagesOrigin && isBankEditor(request, env);
-  if (path === '/api/bank/session' && mode === 'GET') {
-    return bankJson({ editor, signedIn: !!request.headers.get('oai-authenticated-user-id') });
-  }
-  const reviewRoute = path === '/api/bank/review' || path.startsWith('/api/bank/review/');
-  if (reviewRoute && !editor) return bankError('Editor access required.', 403);
   if (!env.DB || !env.BUCKET) return bankError('Assessment bank storage is unavailable.', 503);
 
   if (path === '/api/bank/exams' && mode === 'GET') return listExams(url, env);
@@ -401,45 +385,9 @@ async function handleExamBank(request, url, env) {
     return bankJson({ courses });
   }
   if (path === '/api/bank/report' && mode === 'POST') return reportExam(request, env);
-  if (path === '/api/bank/reports' && mode === 'GET') {
-    if (!editor) return bankError('Editor access required.', 403);
-    const { results } = await env.DB.prepare(
-      "SELECT e.id, e.course, e.term, e.assessment, e.assessment_number, r.reason, COUNT(*) AS reports, MAX(r.created_at) AS latest " +
-      "FROM exam_reports r JOIN exam_bank e ON e.id = r.exam_id GROUP BY e.id, r.reason ORDER BY latest DESC LIMIT 200"
-    ).all();
-    return bankJson({ reports: results });
-  }
   const preview = new RegExp('^/api/bank/preview/(' + entryId + ')\\.pdf$').exec(path);
   if (preview && mode === 'GET') return getPdfPreview(preview[1], env);
   const pdfMatch = new RegExp('^/api/bank/pdf/(' + entryId + ')$').exec(path);
-  if (pdfMatch && mode === 'GET') return getBankPdf(pdfMatch[1], editor, url.searchParams.get('view') === '1', env);
-  if (path === '/api/bank/review' && mode === 'GET') {
-    const { results: exams } = await env.DB.prepare(
-      "SELECT " + bankFields + " FROM exam_bank WHERE status = 'pending' ORDER BY submitted_at, id LIMIT 200"
-    ).all();
-    return bankJson({ exams });
-  }
-  const review = new RegExp('^/api/bank/review/(' + entryId + ')$').exec(path);
-  if (review && mode === 'POST') {
-    const input = await request.json().catch(() => null);
-    if (input?.action !== 'reject' && !(input?.action === 'approve' && input.blankConfirmed === true)) {
-      return bankError('Confirm the PDF has been checked before approving it.');
-    }
-    const state = input.action === 'approve' ? 'approved' : 'rejected';
-    let result;
-    if (state === 'approved') {
-      const details = validateExam(input.details);
-      if (!details) return bankError('Verify the course, year, term, and assessment type before publishing.');
-      result = await env.DB.prepare(
-        "UPDATE exam_bank SET status = 'approved', course = ?, term = ?, assessment = ?, assessment_number = ? WHERE id = ? AND status = 'pending'"
-      ).bind(details.course, details.term, details.assessment, details.number, review[1]).run();
-    } else {
-      result = await env.DB.prepare(
-        "UPDATE exam_bank SET status = 'rejected' WHERE id = ? AND status = 'pending'"
-      ).bind(review[1]).run();
-    }
-    if (!result.meta.changes) return bankError('This submission has already been reviewed or removed.', 409);
-    return bankJson({ status: state });
-  }
+  if (pdfMatch && mode === 'GET') return getBankPdf(pdfMatch[1], url.searchParams.get('view') === '1', env);
   return bankError('Not found.', 404);
 }

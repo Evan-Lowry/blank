@@ -22,7 +22,13 @@
   "vars": {
     "MAX_STORED_PAGES": "30000",
     "MAX_DAILY_PUBLISHES": "300",
-    "MAX_DAILY_SYNC_PROFILES": "500"
+    "MAX_DAILY_SYNC_PROFILES": "500",
+    // Per-IP limits per hour for the public write endpoints (0 turns one off). See DEPLOY.md.
+    "RATE_EXPORT_PER_HOUR": "20",
+    "RATE_REPORT_PER_HOUR": "10",
+    "RATE_SYNC_CREATE_PER_HOUR": "5",
+    // Cloudflare Turnstile: the public site key goes here, the secret is a Worker secret (TURNSTILE_SECRET).
+    "TURNSTILE_SITE_KEY": ""
   },
   "observability": { "enabled": true }
 }

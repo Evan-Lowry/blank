@@ -65,7 +65,7 @@ function examLabel(exam) {
 }
 
 async function bankFetch(path, options) {
-  const response = await fetch(apiBase + '/api/bank/' + path, options);
+  const response = await fetch('/api/bank/' + path, options);
   if (!response.ok) {
     const message = await response.json().catch(() => null);
     throw new Error(message?.error || 'The assessment bank could not complete this request.');
@@ -274,10 +274,10 @@ function createExamRow(exam, { showCourse = false } = {}) {
   preview.textContent = 'Preview';
   preview.setAttribute('aria-controls', 'viewer');
   preview.setAttribute('aria-expanded', 'false');
-  preview.addEventListener('click', () => showPdf(preview, apiBase + '/api/bank/pdf/' + exam.id + '?view=1'));
+  preview.addEventListener('click', () => showPdf(preview, '/api/bank/pdf/' + exam.id + '?view=1'));
   const download = document.createElement('a');
   download.className = 'download';
-  download.href = apiBase + '/api/bank/pdf/' + exam.id;
+  download.href = '/api/bank/pdf/' + exam.id;
   download.textContent = 'Download';
   const more = document.createElement('button');
   more.type = 'button';
@@ -643,10 +643,11 @@ reportForm.addEventListener('submit', async event => {
   const submit = document.querySelector('#report-submit');
   submit.disabled = true;
   try {
+    const turnstileToken = await getTurnstileToken();
     await bankFetch('report', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: reportTarget.id, reason: new FormData(reportForm).get('reason') }),
+      body: JSON.stringify({ id: reportTarget.id, reason: new FormData(reportForm).get('reason'), turnstileToken }),
     });
     reportDialog.close();
     bankStatus.textContent = 'Thanks. The report was sent.';
@@ -857,7 +858,7 @@ async function loadLists() {
   if (!route.id) {
     listsHeading.textContent = 'Lists';
     listsNew.hidden = false;
-    listsSync.hidden = Boolean(apiBase);
+    listsSync.hidden = false;
     renderIndex();
     return;
   }
@@ -1055,7 +1056,7 @@ function formatCode(value) {
 }
 
 async function syncCall(method, code, body) {
-  const response = await fetch(apiBase + '/api/sync', {
+  const response = await fetch('/api/sync', {
     method,
     headers: { 'Content-Type': 'application/json', ...(code ? { 'X-Sync-Code': code } : {}) },
     body: body ? JSON.stringify(body) : undefined,
@@ -1205,12 +1206,10 @@ document.querySelector('#sync-stop').addEventListener('click', async () => {
   renderSyncDialog('Sync is off. Your lists stay on this device.');
 });
 
-if (!apiBase) {
-  syncNow();
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && syncCode() && Date.now() - lastPull > 10000) syncNow();
-  });
-}
+syncNow();
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && syncCode() && Date.now() - lastPull > 10000) syncNow();
+});
 
 // Paste a Crowdmark link anywhere (search box or the page itself) and the converter opens with it filled in.
 // It does not start by itself: converting publishes to the public bank, so you press Prepare PDF to confirm.
