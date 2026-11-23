@@ -235,7 +235,7 @@
       <button class="secondary" type="button" id="preview-back">Back</button>
       <a class="download secondary" id="preview-open" target="_blank" rel="noopener noreferrer">Open PDF in new tab</a>
     </div>
-    <p class="viewer-message" id="viewer-message" hidden>Open the PDF in a new tab to use your browser’s viewer.</p>
+    <p class="viewer-message" id="viewer-message" hidden>This browser does not display PDFs inside the page.</p>
     <iframe id="viewer-frame" class="viewer-frame" title="PDF preview"></iframe>
   </section>
 </div>
@@ -396,7 +396,7 @@
     const row = button.closest('article, section');
     row?.classList.add('preview-selected');
     previewOpen.href = url;
-    const embedsPdfs = navigator.pdfViewerEnabled !== false;
+    const embedsPdfs = navigator.pdfViewerEnabled !== false && !/CodexBrowser\b/i.test(navigator.userAgent);
     viewerFrame.hidden = !embedsPdfs;
     viewerMessage.hidden = embedsPdfs;
     if (embedsPdfs) viewerFrame.src = url;
@@ -418,6 +418,7 @@
     const retryGroup = card.querySelector('.retry-form');
     const retryLink = retryGroup.querySelector('input');
     const retry = retryGroup.querySelector('button');
+    const originalField = [...fields.querySelectorAll('input')].find(input => input.value.trim() === link);
     retryLink.value = link;
     retryLink.setAttribute('aria-label', 'Crowdmark link for assessment ' + (index + 1));
 
@@ -428,7 +429,11 @@
     results.append(card);
     const row = { card, title, details, actions, previewButton, download, contribute, retryGroup, retry };
     retry.addEventListener('click', async () => {
-      if (await prepareAssessment(retryLink.value.trim(), row)) summarizeBatch();
+      const corrected = retryLink.value.trim();
+      if (await prepareAssessment(corrected, row)) {
+        if (originalField?.value.trim() === link) originalField.value = corrected;
+        summarizeBatch();
+      }
     });
     retryLink.addEventListener('keydown', event => {
       if (event.key === 'Enter') {
