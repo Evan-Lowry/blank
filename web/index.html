@@ -278,6 +278,7 @@
       </div>
       <div class="viewer-tools">
         <a class="download secondary" id="preview-open" target="_blank" rel="noopener noreferrer" hidden>Open in browser</a>
+        <button class="secondary" id="preview-fallback" type="button" hidden>Use alternate viewer</button>
         <button id="preview-download" type="button" hidden>Download PDF</button>
       </div>
     </div>
@@ -338,6 +339,7 @@
   const viewer = document.querySelector('#viewer');
   const viewerFrame = document.querySelector('#viewer-frame');
   const previewOpen = document.querySelector('#preview-open');
+  const previewFallback = document.querySelector('#preview-fallback');
   const previewBack = document.querySelector('#preview-back');
   const previewDownload = document.querySelector('#preview-download');
   const viewerMessage = document.querySelector('#viewer-message');
@@ -472,6 +474,13 @@
   }
 
   previewBack.addEventListener('click', () => hidePreview(true));
+  previewFallback.addEventListener('click', () => {
+    viewerFrame.removeAttribute('src');
+    viewerFrame.hidden = true;
+    previewFallback.hidden = true;
+    standardFrame.hidden = false;
+    showStandardPdf(currentPdf, ++viewerSequence);
+  });
   viewer.addEventListener('keydown', event => {
     if (event.key === 'Escape') hidePreview(true);
   });
@@ -495,6 +504,7 @@
     const native = source.inlineUrl && navigator.pdfViewerEnabled &&
       !/CodexBrowser\b/i.test(navigator.userAgent);
     viewerFrame.hidden = !native;
+    previewFallback.hidden = !native;
     standardFrame.hidden = !!native;
     standardTools.hidden = true;
     viewerMessage.hidden = true;
