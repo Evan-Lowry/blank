@@ -579,6 +579,7 @@
       const count = Number(response.headers.get('X-Page-Count'));
       const filename = /filename="([^"]+)"/.exec(response.headers.get('Content-Disposition') || '')?.[1] || 'crowdmark-assessment.pdf';
       const bankStatus = response.headers.get('X-Bank-Status');
+      const published = response.headers.get('X-Bank-Published') === '1';
       const previewPath = response.headers.get('X-PDF-Preview');
       if (!previewPath) throw new Error('The export service did not return a PDF preview. Try again.');
       const pdf = await response.blob();
@@ -588,7 +589,7 @@
       row.title.textContent = title;
       row.details.textContent = count + (count === 1 ? ' blank page' : ' blank pages') +
         (first > 1 ? ' · Booklet pages ' + (first === last ? first : first + '–' + last) : '') +
-        (bankStatus === 'duplicate' ? ' · Already submitted' : ' · Submitted for review');
+        (published ? ' · Already in the exam bank' : bankStatus === 'duplicate' ? ' · Already submitted' : ' · Submitted for review');
       row.openPreview = () => showPdf(row.previewButton, apiBase + previewPath);
       row.previewButton.hidden = false;
       row.previewButton.addEventListener('click', row.openPreview);

@@ -7,7 +7,7 @@ const pagesHeaders = {
   'Access-Control-Allow-Origin': githubPagesOrigin,
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
-  'Access-Control-Expose-Headers': 'Content-Disposition, X-Assessment-Title, X-Bank-Status, X-PDF-Preview, X-Page-Count, X-First-Page, X-Last-Page',
+  'Access-Control-Expose-Headers': 'Content-Disposition, X-Assessment-Title, X-Bank-Status, X-Bank-Published, X-PDF-Preview, X-Page-Count, X-First-Page, X-Last-Page',
   'Vary': 'Origin',
 };
 
@@ -175,6 +175,7 @@ async function exportAssessment(request, env) {
     'Content-Disposition': 'attachment; filename="' + filename + '"',
     'X-Assessment-Title': encodeURIComponent(title),
     'X-Bank-Status': pending.status,
+    ...(pending.published ? { 'X-Bank-Published': '1' } : {}),
     ...(input.nativePreview === true ? { 'X-PDF-Preview': await createPdfPreview(pending.id, filename, env) } : {}),
     'X-Page-Images': JSON.stringify(pageImages),
     'X-Page-Count': String(images.length),

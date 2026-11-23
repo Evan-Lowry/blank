@@ -165,12 +165,33 @@ async function submitExam(request, env) {
   return bankJson({ status }, status === 'pending' ? 201 : 200);
 }
 
+async function hashPdf(bytes) {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+  return Array.from(digest, byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function findLegacyMatch(rendered, pageImages, hash, onlyPublished, env) {
+  // Page offsets narrow the lookup. Only identical PDF bytes count as a match.
+  const { results } = await env.DB.prepare(
+    "SELECT id, status FROM exam_bank WHERE content_hash IS NULL AND page_count = ? AND page_images = ? " +
+    "AND (? = 0 OR status = 'approved') ORDER BY CASE status WHEN 'approved' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END"
+  ).bind(rendered.pageImages.length, pageImages, Number(onlyPublished)).all();
+  for (const entry of results) {
+    const object = await env.BUCKET.get('exams/' + entry.id + '.pdf');
+    if (!object || (Number.isSafeInteger(object.size) && object.size !== rendered.pdf.size)) continue;
+    if (await hashPdf(await new Response(object.body).arrayBuffer()) === hash) return entry;
+  }
+}
+
 async function savePendingExam(details, rendered, env) {
-  const bytes = await rendered.pdf.arrayBuffer();
-  const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), byte => byte.toString(16).padStart(2, '0')).join('');
-  const matchingExam = env.DB.prepare('SELECT id FROM exam_bank WHERE content_hash = ?').bind(hash);
-  const existing = await matchingExam.first();
-  if (existing) return { id: existing.id, status: 'duplicate' };
+  const hash = await hashPdf(await rendered.pdf.arrayBuffer());
+  const pageImages = JSON.stringify(rendered.pageImages);
+  const matchingExam = env.DB.prepare('SELECT id, status FROM exam_bank WHERE content_hash = ?').bind(hash);
+  let existing = await matchingExam.first();
+  if (existing?.status !== 'approved') {
+    existing = await findLegacyMatch(rendered, pageImages, hash, Boolean(existing), env) || existing;
+  }
+  if (existing) return { id: existing.id, status: 'duplicate', published: existing.status === 'approved' };
 
   const id = crypto.randomUUID();
   const key = 'exams/' + id + '.pdf';
@@ -180,7 +201,7 @@ async function savePendingExam(details, rendered, env) {
       'INSERT INTO exam_bank (id, course, term, assessment, assessment_number, page_count, page_images, content_hash) ' +
       'VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(content_hash) DO NOTHING'
     ).bind(id, details.course, details.term, details.assessment, details.number ? Number(details.number) : null,
-      rendered.pageImages.length, JSON.stringify(rendered.pageImages), hash).run();
+      rendered.pageImages.length, pageImages, hash).run();
     if (result.meta.changes) return { id, status: 'pending' };
   } catch (error) {
     await env.BUCKET.delete(key);
@@ -188,7 +209,7 @@ async function savePendingExam(details, rendered, env) {
   }
   await env.BUCKET.delete(key);
   const winner = await matchingExam.first();
-  return { id: winner.id, status: 'duplicate' };
+  return { id: winner.id, status: 'duplicate', published: winner.status === 'approved' };
 }
 
 async function createPdfPreview(id, filename, env) {
