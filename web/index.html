@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="Download the blank assessment pages from a shareable Crowdmark results link.">
 <title>Clean Copy · Crowdmark PDF Export</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/pdf-viewer.css">
 <style>
   :root {
     color-scheme: dark;
@@ -25,7 +27,7 @@
   main {
     width: min(100rem, calc(100% - clamp(2rem, 8vw, 7rem)));
     margin-inline: auto;
-    padding-block: clamp(2rem, 9vh, 5.5rem) 3rem;
+    padding-block: clamp(2.1rem, 6vh, 4.5rem) 3rem;
   }
   .workspace { width: min(100%, 38rem); margin-inline: auto; }
   .workspace.split {
@@ -117,14 +119,45 @@
     position: sticky;
     top: 1rem;
   }
-  .viewer-toolbar { display:flex; justify-content:flex-end; gap:.5rem; margin-bottom:.65rem; }
-  .viewer-toolbar a, .viewer-toolbar button { min-height:2.5rem; font-size:.875rem; padding:.4rem .75rem; }
-  .viewer-frame { width:100%; height:70vh; display:block; border:1px solid var(--border); background:var(--field); }
-  .viewer-message { margin:.25rem 0; color:var(--muted); }
+  .viewer-toolbar { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:.5rem; margin-bottom:.65rem; }
+  .viewer-tools { display:flex; flex-wrap:wrap; align-items:center; gap:.3rem; }
+  .viewer-toolbar a, .viewer-toolbar button { min-height:2.5rem; font-size:.875rem; padding:.38rem .65rem; }
+  .viewer-count { color:var(--muted); font-variant-numeric:tabular-nums; font-size:.875rem; padding-inline:.25rem; }
+  .viewer-frame, .standard-frame { width:100%; height:70vh; display:block; border:1px solid var(--border); background:var(--field); }
+  .standard-frame { position:relative; }
+  .pdf-scroll { position:absolute; inset:0; overflow:auto; }
+  .viewer-message { margin:.25rem 0; color:var(--muted); font-size:.875rem; }
   .preview-selected { background:#282828; }
-  .bank-entry.preview-selected { box-shadow: -3px 0 var(--accent); }
-  .course-matches { display:flex; gap:.4rem; flex-wrap:wrap; margin-top:.55rem; }
-  .course-matches a { color:var(--text); font-size:.875rem; padding:.25rem .45rem; border:1px solid var(--border); }
+  .preview-selected .actions > .download, .preview-selected .bank-actions > .download { display:none; }
+  #preview-back { display:none; }
+  .bank-entry.preview-selected { box-shadow:-3px 0 var(--accent); }
+  .site-header { border-bottom:1px solid var(--border); background:var(--panel); }
+  .header-inner {
+    width:min(78rem, calc(100% - 2rem));
+    margin-inline:auto;
+    min-height:4.25rem;
+    display:grid;
+    grid-template-columns:auto minmax(12rem, 1fr) auto;
+    align-items:center;
+    gap:clamp(.65rem, 3vw, 2rem);
+    padding-block:.65rem;
+  }
+  .wordmark { display:inline-flex; align-items:center; gap:.52rem; color:var(--text); font-weight:720; text-decoration:none; white-space:nowrap; }
+  .wordmark img { width:1.65rem; height:1.65rem; }
+  .header-search { position:relative; margin:0; }
+  .header-search input { width:100%; min-height:2.6rem; padding:.42rem .7rem; }
+  .header-link { color:var(--muted); text-decoration:none; font-size:.9rem; white-space:nowrap; border-block-end:1px solid transparent; }
+  .header-link:hover, .header-link[aria-current] { color:var(--text); border-block-end-color:currentColor; }
+  .course-matches {
+    display:grid; gap:.15rem; position:absolute; z-index:2; inset-inline:0; top:calc(100% + .28rem);
+    background:var(--panel); border:1px solid var(--border); padding:.3rem;
+  }
+  .course-matches a { color:var(--text); font-size:.875rem; padding:.4rem .55rem; text-decoration:none; }
+  .course-matches a:hover, .course-matches a:focus-visible { background:#343434; }
+  @media (max-width:32rem) {
+    .header-inner { grid-template-columns:1fr auto; gap:.45rem .9rem; }
+    .header-search { grid-row:2; grid-column:1 / -1; }
+  }
   .duplicate-notice { border:1px solid #555; padding:.65rem; font-size:.875rem; }
   .duplicate-notice a { color:var(--text); }
   .duplicate-notice ul { margin:.25rem 0; padding-left:1.25rem; }
@@ -138,11 +171,9 @@
     margin: 0 auto 1.35rem;
     border-bottom: 1px solid var(--border);
   }
-  .site-nav:has(+ .split) { width: 100%; }
   .site-nav a { color: var(--muted); text-decoration: none; padding: .45rem .1rem; }
   .site-nav a[aria-current] { color: var(--text); box-shadow: inset 0 -2px var(--accent); }
   .bank-filters, .contribution-fields { display: grid; gap: .6rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .bank-filters > :first-child { grid-column: 1 / -1; }
   .form-field { display: grid; gap: .3rem; font-size: .875rem; }
   .form-field input:not([type=checkbox]), .form-field select { width: 100%; min-width: 0; }
   select { background: var(--field); color: var(--text); padding: .65rem; border: 1px solid #555; border-radius: .5rem; font: inherit; }
@@ -171,7 +202,8 @@
     .workspace.split { display: grid; width: min(100%, 38rem); grid-template-columns: minmax(0, 1fr); }
     .viewer { position:fixed; inset:0; z-index:5; display:flex; flex-direction:column; background:var(--background); }
     .viewer-toolbar { justify-content:space-between; }
-    .viewer-frame { min-height:0; height:auto; flex:1; }
+    #preview-back { display:inline-flex; }
+    .viewer-frame, .standard-frame { min-height:0; height:auto; flex:1; }
     body.pdf-open { overflow:hidden; }
   }
   @media (max-width: 30rem) {
@@ -180,11 +212,17 @@
 </style>
 </head>
 <body>
+<header class="site-header">
+  <div class="header-inner">
+    <a class="wordmark" href="#converter" aria-label="Clean Copy home"><img src="/favicon.svg" alt="">Clean Copy</a>
+    <form class="header-search" id="course-search" role="search">
+      <input id="bank-course" type="search" aria-label="Course code" placeholder="Find a course" maxlength="24" autocomplete="off">
+      <div class="course-matches" id="course-matches" aria-label="Matching courses" hidden></div>
+    </form>
+    <a class="header-link" href="#exam-bank" id="bank-nav">Exam Bank</a>
+  </div>
+</header>
 <main>
-<nav class="site-nav" aria-label="Clean Copy">
-  <a href="#converter" aria-current="page">Converter</a>
-  <a href="#exam-bank">Exam bank</a>
-</nav>
 <div class="workspace" id="workspace">
   <div>
   <section id="converter-view" aria-labelledby="converter-heading">
@@ -198,7 +236,7 @@
         <div class="links" id="links" role="group" aria-labelledby="links-label"></div>
         <div class="form-buttons">
           <button type="button" class="secondary" id="add-link">Add another link</button>
-          <button type="submit" id="prepare">Prepare PDFs</button>
+          <button type="submit" id="prepare">Prepare PDF</button>
         </div>
       </div>
       <p class="status" id="status" role="status"></p>
@@ -209,9 +247,6 @@
     <h1 id="bank-heading">Waterloo Exam Bank</h1>
     <div class="panel">
       <div id="bank-filters" class="bank-filters">
-        <label class="form-field">Course code
-          <input id="bank-course" type="search" placeholder="STAT 230" maxlength="24" autocomplete="off">
-        </label>
         <label class="form-field">Term
           <select id="bank-term"><option value="">All terms</option></select>
         </label>
@@ -219,7 +254,6 @@
           <select id="bank-assessment"><option value="">All types</option><option>Midterm</option><option>Final</option><option>Quiz</option><option>Test</option><option>Other</option></select>
         </label>
       </div>
-      <div class="course-matches" id="course-matches" aria-label="Matching courses" hidden></div>
       <div class="bank-actions">
         <button id="bank-upload" type="button">Contribute a PDF</button>
         <button class="secondary" id="bank-review" type="button">Review submissions</button>
@@ -232,11 +266,27 @@
   </div>
   <section class="panel viewer" id="viewer" aria-label="PDF preview" hidden>
     <div class="viewer-toolbar">
-      <button class="secondary" type="button" id="preview-back">Back</button>
-      <a class="download secondary" id="preview-open" target="_blank" rel="noopener noreferrer">Open PDF in new tab</a>
+      <div class="viewer-tools">
+        <button class="secondary" type="button" id="preview-back">Back</button>
+        <div class="viewer-tools" id="standard-tools" hidden>
+          <button class="secondary" type="button" id="previous-page" aria-label="Previous page">‹</button>
+          <span class="viewer-count" id="page-count" role="status"></span>
+          <button class="secondary" type="button" id="next-page" aria-label="Next page">›</button>
+          <button class="secondary" type="button" id="zoom-out" aria-label="Zoom out">−</button>
+          <button class="secondary" type="button" id="zoom-fit">Fit width</button>
+          <button class="secondary" type="button" id="zoom-in" aria-label="Zoom in">+</button>
+        </div>
+      </div>
+      <div class="viewer-tools">
+        <a class="download secondary" id="preview-open" target="_blank" rel="noopener noreferrer" hidden>Open in browser</a>
+        <button id="preview-download" type="button" hidden>Download PDF</button>
+      </div>
     </div>
-    <p class="viewer-message" id="viewer-message" hidden>This browser does not display PDFs inside the page.</p>
-    <iframe id="viewer-frame" class="viewer-frame" title="PDF preview"></iframe>
+    <p class="viewer-message" id="viewer-message" role="status" hidden></p>
+    <iframe id="viewer-frame" class="viewer-frame" title="PDF preview" hidden></iframe>
+    <div id="standard-frame" class="standard-frame" hidden>
+      <div id="pdf-scroll" class="pdf-scroll" tabindex="0" aria-label="PDF pages"><div class="pdfViewer"></div></div>
+    </div>
   </section>
 </div>
 </main>
@@ -292,8 +342,7 @@
     </div>
     <div class="actions" hidden>
       <button type="button" class="secondary" aria-expanded="false" aria-controls="viewer" hidden>Preview PDF</button>
-      <a class="download" hidden>Download PDF</a>
-      <button type="button" class="secondary contribute" hidden>Contribute to the exam bank</button>
+      <button type="button" class="download" hidden>Download PDF</button>
     </div>
   </section>
 </template>
@@ -311,10 +360,71 @@
   const viewerFrame = document.querySelector('#viewer-frame');
   const previewOpen = document.querySelector('#preview-open');
   const previewBack = document.querySelector('#preview-back');
+  const previewDownload = document.querySelector('#preview-download');
   const viewerMessage = document.querySelector('#viewer-message');
+  const standardFrame = document.querySelector('#standard-frame');
+  const standardTools = document.querySelector('#standard-tools');
+  const pageCount = document.querySelector('#page-count');
+  const viewport = document.querySelector('#pdf-scroll');
+  const previous = document.querySelector('#previous-page');
+  const next = document.querySelector('#next-page');
   const objectUrls = new Set();
   let activePreview;
   let previewScroll;
+  let currentPdf;
+  let viewerSequence = 0;
+  let pdfViewer;
+  let pdfTask;
+  let pdfBuilder;
+
+  function syncViewerPage(page, count) {
+    pageCount.textContent = page + ' / ' + count;
+    previous.disabled = page <= 1;
+    next.disabled = page >= count;
+  }
+
+  async function showStandardPdf(source, sequence) {
+    viewerMessage.textContent = 'Loading PDF…';
+    viewerMessage.hidden = false;
+    try {
+      const pdfjs = await import('/pdfjs.mjs');
+      const components = await import('/pdf-viewer.mjs');
+      const data = source.blob ? new Uint8Array(await source.blob.arrayBuffer()) : undefined;
+      if (viewerSequence !== sequence) return;
+      pdfjs.GlobalWorkerOptions.workerSrc = '/pdfjs-worker.mjs';
+      if (!pdfViewer) {
+        const eventBus = new components.EventBus();
+        pdfViewer = new components.PDFViewer({
+          container: viewport, eventBus, annotationMode: 0, textLayerMode: 0,
+        });
+        eventBus.on('pagesinit', () => {
+          pdfViewer.currentScaleValue = 'page-width';
+          syncViewerPage(1, pdfViewer.pagesCount);
+        });
+        eventBus.on('pagechanging', ({ pageNumber }) => syncViewerPage(pageNumber, pdfViewer.pagesCount));
+      }
+      const task = pdfjs.getDocument({
+        ...(data ? { data } : { url: source.inlineUrl }),
+        isEvalSupported: false, useWasm: false, enableXfa: false,
+      });
+      pdfTask = task;
+      const document = await task.promise;
+      if (viewerSequence !== sequence) return;
+      viewport.scrollTop = 0;
+      pdfViewer.setDocument(document);
+      standardTools.hidden = false;
+      viewerMessage.hidden = true;
+    } catch {
+      if (viewerSequence === sequence) viewerMessage.textContent = 'The PDF preview could not load. Close it and try again.';
+    }
+  }
+
+  previous.addEventListener('click', () => pdfViewer.previousPage());
+  next.addEventListener('click', () => pdfViewer.nextPage());
+  document.querySelector('#zoom-out').addEventListener('click', () => pdfViewer.decreaseScale());
+  document.querySelector('#zoom-in').addEventListener('click', () => pdfViewer.increaseScale());
+  document.querySelector('#zoom-fit').addEventListener('click', () => { pdfViewer.currentScaleValue = 'page-width'; });
+  previewDownload.addEventListener('click', () => currentPdf?.download?.());
 
   function updateLinkLabels() {
     [...fields.children].forEach((row, index) => {
@@ -364,6 +474,11 @@
     if (!activePreview) return;
     const button = activePreview;
     activePreview = undefined;
+    currentPdf = undefined;
+    viewerSequence++;
+    pdfViewer?.setDocument(null);
+    pdfTask?.destroy().catch(() => {});
+    pdfTask = undefined;
     button.setAttribute('aria-expanded', 'false');
     button.textContent = 'Preview PDF';
     button.closest('article, section')?.classList.remove('preview-selected');
@@ -383,7 +498,7 @@
     if (event.key === 'Escape') hidePreview(true);
   });
 
-  function showPdf(button, url) {
+  function showPdf(button, source) {
     if (button === activePreview) {
       hidePreview(true);
       return;
@@ -391,18 +506,25 @@
     if (!activePreview) previewScroll = window.scrollY;
     hidePreview();
     activePreview = button;
+    currentPdf = source;
     button.setAttribute('aria-expanded', 'true');
     button.textContent = 'Hide preview';
     const row = button.closest('article, section');
     row?.classList.add('preview-selected');
-    previewOpen.href = url;
-    const embedsPdfs = navigator.pdfViewerEnabled !== false && !/CodexBrowser\b/i.test(navigator.userAgent);
-    viewerFrame.hidden = !embedsPdfs;
-    viewerMessage.hidden = embedsPdfs;
-    if (embedsPdfs) viewerFrame.src = url;
+    previewOpen.hidden = !source.inlineUrl;
+    if (source.inlineUrl) previewOpen.href = source.inlineUrl;
+    previewDownload.hidden = !source.download;
+    const native = source.inlineUrl && navigator.pdfViewerEnabled &&
+      !/CodexBrowser\b/i.test(navigator.userAgent);
+    viewerFrame.hidden = !native;
+    standardFrame.hidden = !!native;
+    standardTools.hidden = true;
+    viewerMessage.hidden = true;
     viewer.hidden = false;
     workspace.classList.add('split');
     document.body.classList.add('pdf-open');
+    if (native) viewerFrame.src = source.inlineUrl;
+    else showStandardPdf(source, ++viewerSequence);
     if (matchMedia('(max-width: 50rem)').matches) previewBack.focus({ preventScroll: true });
     else row?.scrollIntoView({ block: 'nearest' });
   }
@@ -413,8 +535,7 @@
     const details = card.querySelector('.details');
     const actions = card.querySelector('.actions');
     const previewButton = actions.querySelector('button');
-    const download = actions.querySelector('a');
-    const contribute = actions.querySelector('.contribute');
+    const download = actions.querySelector('.download');
     const retryGroup = card.querySelector('.retry-form');
     const retryLink = retryGroup.querySelector('input');
     const retry = retryGroup.querySelector('button');
@@ -427,7 +548,7 @@
     card.setAttribute('aria-labelledby', title.id);
     details.textContent = 'Waiting…';
     results.append(card);
-    const row = { card, title, details, actions, previewButton, download, contribute, retryGroup, retry };
+    const row = { card, title, details, actions, previewButton, download, retryGroup, retry };
     retry.addEventListener('click', async () => {
       const corrected = retryLink.value.trim();
       if (await prepareAssessment(corrected, row)) {
@@ -501,6 +622,17 @@
     return response;
   }
 
+  function startConverterDownload(row) {
+    if (!row.downloadUrl) {
+      openContribution({ title: row.title.textContent, submit: row.submitContribution });
+      return;
+    }
+    const link = document.createElement('a');
+    link.href = row.downloadUrl;
+    link.download = row.filename;
+    link.click();
+  }
+
   async function unlockConverterExport(link, row, contribution) {
     const response = await requestExport(link, contribution);
     if (!response.headers.get('Content-Type')?.startsWith('application/pdf')) {
@@ -509,32 +641,40 @@
     const filename = /filename="([^"]+)"/.exec(response.headers.get('Content-Disposition') || '')?.[1];
     const pdf = await response.blob();
     if (!row.card.isConnected) return;
-    const url = objectUrl(pdf);
-    row.previewButton.hidden = false;
-    row.previewButton.addEventListener('click', () => showPdf(row.previewButton, url));
-    row.download.href = url;
-    row.download.download = filename || 'crowdmark-assessment-blank.pdf';
-    row.download.hidden = false;
-    row.contribute.hidden = true;
-    row.details.textContent = row.summary;
+    row.downloadUrl = objectUrl(pdf);
+    row.filename = filename || 'crowdmark-assessment-blank.pdf';
+    if (activePreview === row.previewButton) {
+      previewOpen.href = row.downloadUrl;
+      previewOpen.hidden = false;
+    }
+    startConverterDownload(row);
   }
 
   async function prepareAssessment(link, row) {
     row.retry.disabled = true;
     row.details.classList.remove('error');
-    row.details.textContent = 'Finding blank pages…';
+    row.details.textContent = 'Preparing blank PDF…';
     try {
-      const { title, first, last, count } = await (await requestExport(link)).json();
+      const payload = await (await requestExport(link)).formData();
+      const { title, first, last, count } = JSON.parse(payload.get('exam'));
+      const pages = await Promise.all(payload.getAll('page').map(async page => new Uint8Array(await page.arrayBuffer())));
+      pdfBuilder ||= import('/pdf-builder.mjs');
+      const { makePdf } = await pdfBuilder;
+      const { pdf } = makePdf(pages);
       if (!row.card.isConnected) return false;
       row.title.textContent = title;
-      row.summary = count + (count === 1 ? ' blank page.' : ' blank pages.') +
-        (first > 1 ? ' Crowdmark supplied booklet pages ' + (first === last ? first : first + '–' + last) + '.' : '');
-      row.details.textContent = row.summary + ' Contribute to unlock the PDF.';
-      row.contribute.hidden = false;
-      row.contribute.addEventListener('click', () => openContribution({
-        title,
-        submit: details => unlockConverterExport(link, row, details),
-      }));
+      row.details.textContent = count + (count === 1 ? ' blank page.' : ' blank pages.') +
+        (first > 1 ? ' Booklet pages ' + (first === last ? first : first + '–' + last) + '.' : '');
+      row.submitContribution = details => unlockConverterExport(link, row, details);
+      row.openPreview = () => showPdf(row.previewButton, {
+        blob: pdf,
+        inlineUrl: row.downloadUrl,
+        download: () => startConverterDownload(row),
+      });
+      row.previewButton.hidden = false;
+      row.previewButton.addEventListener('click', row.openPreview);
+      row.download.hidden = false;
+      row.download.addEventListener('click', () => startConverterDownload(row));
       row.retryGroup.hidden = true;
       row.actions.hidden = false;
       return true;
@@ -585,8 +725,9 @@
     await Promise.all(Array.from({ length: Math.min(3, links.length) }, runQueue));
 
     prepare.disabled = false;
-    prepare.textContent = 'Prepare PDFs';
+    prepare.textContent = 'Prepare PDF';
     summarizeBatch();
+    if (!converterView.hidden && !activePreview) rows.find(row => row.openPreview)?.openPreview();
   });
 
   fields.addEventListener('input', () => {

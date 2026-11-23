@@ -1,6 +1,8 @@
 const bankView = document.querySelector('#bank-view');
 const converterView = document.querySelector('#converter-view');
 const bankCourse = document.querySelector('#bank-course');
+const headerSearch = document.querySelector('#course-search');
+const bankNav = document.querySelector('#bank-nav');
 const courseMatches = document.querySelector('#course-matches');
 const bankTerm = document.querySelector('#bank-term');
 const bankAssessment = document.querySelector('#bank-assessment');
@@ -21,6 +23,7 @@ const duplicateConfirm = document.querySelector('#duplicate-confirm');
 const submissionLimit = 24 * 1024 * 1024;
 let bankRequest = 0;
 let bankSearchTimer;
+let headerQueryVersion = 0;
 let contributionSource;
 let uploadCheck = 0;
 let pdfLibrary;
@@ -69,10 +72,10 @@ function applyBankRoute() {
   hidePreview();
   converterView.hidden = mode !== 'converter';
   bankView.hidden = mode === 'converter';
-  for (const link of document.querySelectorAll('.site-nav a')) {
-    if ((link.hash === '#converter') === (mode === 'converter')) link.setAttribute('aria-current', 'page');
-    else link.removeAttribute('aria-current');
-  }
+  if (mode === 'converter') bankNav.removeAttribute('aria-current');
+  else bankNav.setAttribute('aria-current', 'page');
+  courseMatches.hidden = true;
+  headerQueryVersion++;
   if (mode === 'converter') return;
 
   const routeCourse = /^#exam-bank\/([A-Za-z]{2,8}\d{3}[A-Za-z]?)$/.exec(location.hash);
@@ -116,16 +119,7 @@ async function loadExamList() {
     if (request !== bankRequest) return;
     selectableTerms(terms);
     const coursePage = location.hash.startsWith('#exam-bank/');
-    courseMatches.replaceChildren();
-    if (!coursePage) {
-      for (const match of courses) {
-        const link = document.createElement('a');
-        link.href = '#exam-bank/' + match.course;
-        link.textContent = courseLabel(match.course) + ' · ' + match.count + (match.count === 1 ? ' exam' : ' exams');
-        courseMatches.append(link);
-      }
-    }
-    courseMatches.hidden = !courseMatches.childElementCount;
+    showCourseMatches(coursePage ? [] : courses);
     bankStatus.textContent = exams.length ? '' : 'No approved exams match these filters.';
     const groups = Map.groupBy(exams, exam => exam.course);
     for (const [course, entries] of groups) {
@@ -200,7 +194,10 @@ function createExamEntry(exam, review = false) {
   feedback.setAttribute('role', 'status');
   button.addEventListener('click', () => {
     const opening = button !== activePreview;
-    showPdf(button, '/api/bank/' + filePath + '?view=1');
+    showPdf(button, {
+      inlineUrl: '/api/bank/' + filePath + '?view=1',
+      download: review ? undefined : () => { window.location.href = '/api/bank/' + filePath; },
+    });
     if (opening) onPreview?.();
   });
   actions.append(button);
@@ -251,22 +248,63 @@ function createExamEntry(exam, review = false) {
   return article;
 }
 
+function showCourseMatches(courses) {
+  courseMatches.replaceChildren();
+  for (const match of courses) {
+    const link = document.createElement('a');
+    link.href = '#exam-bank/' + match.course;
+    link.textContent = courseLabel(match.course) + ' · ' + match.count + (match.count === 1 ? ' exam' : ' exams');
+    link.addEventListener('click', () => { courseMatches.hidden = true; });
+    courseMatches.append(link);
+  }
+  courseMatches.hidden = !courses.length || !headerSearch.contains(document.activeElement);
+}
+
+async function searchFromHeader() {
+  const course = courseKey(bankCourse.value);
+  const version = ++headerQueryVersion;
+  if (!/^[A-Z0-9]{1,12}$/.test(course)) {
+    showCourseMatches([]);
+    return;
+  }
+  try {
+    const { courses } = await (await bankFetch('exams?' + new URLSearchParams({ course }))).json();
+    if (version === headerQueryVersion) showCourseMatches(courses);
+  } catch {
+    if (version === headerQueryVersion) showCourseMatches([]);
+  }
+}
+
 bankCourse.addEventListener('input', () => {
   clearTimeout(bankSearchTimer);
+  headerQueryVersion++;
   bankRequest++;
   if (location.hash.startsWith('#exam-bank/')) {
     history.replaceState(null, '', '#exam-bank');
     document.querySelector('#bank-heading').textContent = 'Waterloo Exam Bank';
   }
-  bankSearchTimer = setTimeout(loadExamList, 220);
+  bankSearchTimer = setTimeout(bankMode() === 'bank' ? loadExamList : searchFromHeader, 220);
+});
+headerSearch.addEventListener('submit', event => {
+  event.preventDefault();
+  courseMatches.hidden = true;
+  const course = courseKey(bankCourse.value);
+  if (/^[A-Z]{2,8}\d{3}[A-Z]?$/.test(course)) goToBankCourse(course);
+  else if (bankMode() !== 'bank') location.hash = 'exam-bank';
+  else loadExamList();
+});
+headerSearch.addEventListener('focusout', event => {
+  if (!headerSearch.contains(event.relatedTarget)) courseMatches.hidden = true;
+});
+headerSearch.addEventListener('keydown', event => {
+  if (event.key === 'Escape') {
+    courseMatches.hidden = true;
+    bankCourse.focus();
+  }
 });
 bankTerm.addEventListener('change', loadExamList);
 bankAssessment.addEventListener('change', loadExamList);
 bankReview.addEventListener('click', () => { location.hash = bankMode() === 'review' ? 'exam-bank' : 'review'; });
-bankCourse.addEventListener('keydown', event => {
-  const course = courseKey(bankCourse.value);
-  if (event.key === 'Enter' && /^[A-Z]{2,8}\d{3}[A-Z]?$/.test(course)) goToBankCourse(course);
-});
 window.addEventListener('hashchange', applyBankRoute);
 applyBankRoute();
 
@@ -332,6 +370,7 @@ function openContribution(source) {
   contributionFile.required = !source;
   contributionStatus.textContent = 'Check the details and fill in anything missing.';
   contributionSubmit.disabled = false;
+  contributionSubmit.textContent = source ? 'Contribute and download' : 'Submit for review';
   if (source) prefillContribution(inferMetadata(source.title));
   contribution.showModal();
   scheduleDuplicateCheck();
@@ -507,7 +546,7 @@ contributionForm.addEventListener('submit', async event => {
     contribution.close();
     if (source) {
       status.classList.remove('error');
-      status.textContent = 'Submitted for review. Your PDF is ready to download.';
+      status.textContent = 'Submitted for review. Your download is ready.';
     } else {
       ++bankRequest;
       bankStatus.textContent = 'Submitted. Your PDF is pending editor review.';

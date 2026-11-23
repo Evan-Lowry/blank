@@ -133,11 +133,6 @@ async function exportAssessment(request, env) {
     payload = JSON.parse(new TextDecoder().decode(await readBytes(response, 4 * 1024 * 1024)));
   }
   const { ordered, title } = templatePages(payload);
-  if (preparing) {
-    return Response.json({ title, count: ordered.length, first: ordered[0][0], last: ordered.at(-1)[0] }, {
-      headers: privateHeaders,
-    });
-  }
   const images = [];
   let total = 0;
   for (let start = 0; start < ordered.length; start += 4) {
@@ -154,6 +149,12 @@ async function exportAssessment(request, env) {
       if (total > 24 * 1024 * 1024) throw new ExportError(422, 'This booklet exceeds the 24 MB export limit.');
       images.push(cleanJpeg(image));
     }
+  }
+  if (preparing) {
+    const preview = new FormData();
+    preview.set('exam', JSON.stringify({ title, count: images.length, first: ordered[0][0], last: ordered.at(-1)[0] }));
+    for (const image of images) preview.append('page', new Blob([image], { type: 'image/jpeg' }), 'page.jpg');
+    return new Response(preview, { headers: privateHeaders });
   }
   const rendered = makePdf(images);
   await savePendingExam(details, rendered, env);
@@ -183,9 +184,10 @@ export default {
         return bankError('The exam bank could not complete this request.', 502);
       }
     }
-    if (request.method === 'GET' && (pathname === '/pdfjs.mjs' || pathname === '/pdfjs-worker.mjs')) {
-      return new Response(pathname === '/pdfjs.mjs' ? PDFJS : PDFJS_WORKER, { headers: {
-        'Content-Type': 'text/javascript; charset=utf-8',
+    if (request.method === 'GET' && Object.hasOwn(APP_ASSETS, pathname)) {
+      const [contentType, content] = APP_ASSETS[pathname];
+      return new Response(content, { headers: {
+        'Content-Type': contentType,
         'Cache-Control': 'public, max-age=3600',
         'X-Content-Type-Options': 'nosniff',
       } });
@@ -194,7 +196,7 @@ export default {
       return new Response(HTML, { headers: {
         'Content-Type': 'text/html; charset=utf-8',
         'Referrer-Policy': 'no-referrer',
-        'Content-Security-Policy': "default-src 'none'; script-src 'self' 'unsafe-inline'; worker-src 'self'; frame-src 'self' blob:; style-src 'unsafe-inline'; img-src 'self' blob:; connect-src 'self' https://app.crowdmark.com; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+        'Content-Security-Policy': "default-src 'none'; script-src 'self' 'unsafe-inline'; worker-src 'self'; frame-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self' https://app.crowdmark.com; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
         ...privateHeaders,
       } });
     }
