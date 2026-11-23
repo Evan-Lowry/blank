@@ -1,6 +1,60 @@
 import { makePdf } from './pdf.js';
 
-const assessmentTypes = new Set(['Midterm', 'Final', 'Quiz', 'Test', 'Other']);
+const examKinds = {
+  Midterm: /\bMID[ -]?TERM(?:S)?\b/,
+  Final: /\bFINALS?\b/,
+  Quiz: /\bQUIZ(?:ZES)?\b/,
+  Test: /\bTESTS?\b/,
+  Exam: /\bEXAMS?\b/,
+  Assignment: /\bASSIGNMENTS?\b|\bHOMEWORK\b|\bPROBLEM[ -]SET\b|\bPS[ -]?\d+\b|\bHW[ -]?\d+\b|\bA[ -]?\d+\b/,
+  Lab: /\bLABS?\b|\bLABORATOR(?:Y|IES)\b/,
+  Tutorial: /\bTUTORIALS?\b/,
+  Project: /\bPROJECTS?\b/,
+  Practice: /\bPRACTICE\b|\bMOCK\b|\bSAMPLE[ -]+(?:MID[ -]?TERM|FINAL|EXAM|TEST|QUIZ)\b/,
+};
+const assessmentTypes = new Set([...Object.keys(examKinds), 'Other']);
+const seasonNames = { WINTER: 'W', SPRING: 'S', SUMMER: 'S', FALL: 'F', AUTUMN: 'F' };
+const uniqueMatch = values => [...new Set(values)].length === 1 ? values[0] : '';
+
+function detectFromLabel(label) {
+  const text = typeof label === 'string' ? label.slice(0, 320).toUpperCase().replace(/[_–—]/g, ' ') : '';
+  const courses = [...text.matchAll(/\b([A-Z]{2,8})[ -]*(\d{3}[A-Z]?)\b/g)]
+    .filter(match => !/^(YEAR|WINTER|SPRING|SUMMER|FALL|AUTUMN|MIDTERM|FINAL|QUIZ|TEST|EXAM|PAGE|LAB|PROJECT|MARKS|TERM)$/.test(match[1]))
+    .map(match => match[1] + match[2]);
+  const terms = [];
+  for (const match of text.matchAll(/\b(WINTER|SPRING|SUMMER|FALL|AUTUMN)[ -]+((?:19|20)\d{2})\b|\b((?:19|20)\d{2})[ -]+(WINTER|SPRING|SUMMER|FALL|AUTUMN)\b/g)) {
+    terms.push((match[2] || match[3]) + '-' + seasonNames[match[1] || match[4]]);
+  }
+  for (const match of text.matchAll(/\b([WSF])[ -]?(\d{2})\b|\b((?:19|20)\d{2})[ -]([WSF])\b/g)) {
+    const twoDigitYear = Number(match[2]);
+    const century = twoDigitYear > new Date().getFullYear() % 100 ? '19' : '20';
+    terms.push((match[3] || century + match[2]) + '-' + (match[1] || match[4]));
+  }
+  for (const match of text.matchAll(/\bTERM[ -]+1(\d{2})([159])\b/g)) {
+    terms.push('20' + match[1] + '-' + { 1: 'W', 5: 'S', 9: 'F' }[match[2]]);
+  }
+  let kinds = Object.keys(examKinds).filter(kind => examKinds[kind].test(text));
+  if (kinds.includes('Practice')) kinds = ['Practice'];
+  if (kinds.includes('Midterm') || kinds.includes('Final') || kinds.includes('Quiz')) {
+    kinds = kinds.filter(kind => kind !== 'Exam' && kind !== 'Test');
+  }
+  const assessment = uniqueMatch(kinds);
+  const numbers = [...text.matchAll(/\b(MID[ -]?TERM|FINAL|QUIZ|TEST|EXAM|ASSIGNMENT|HOMEWORK|PROBLEM[ -]SET|LAB|TUTORIAL|PROJECT|HW|PS|A)[ -]*(?:#|NO\.?[ -]*)?([1-9]\d?)\b/g)]
+    .filter(match => assessment && (assessment === 'Practice' || examKinds[assessment].test(match[1] + ' ' + match[2])))
+    .map(match => match[2]);
+  return { course: uniqueMatch(courses), term: uniqueMatch(terms), assessment, number: uniqueMatch(numbers) || null };
+}
+
+function detectUpload(filename, firstPage) {
+  const name = detectFromLabel(typeof filename === 'string' ? filename.replace(/\.pdf$/i, '') : '');
+  const text = detectFromLabel(typeof firstPage === 'string' ? firstPage.split('\n').slice(0, 8).join(' ') : '');
+  const result = {};
+  for (const field of ['course', 'term', 'assessment', 'number']) {
+    result[field] = name[field] && text[field] && name[field] !== text[field] ? '' : name[field] || text[field] || '';
+  }
+  if (!result.assessment) result.number = null;
+  return result;
+}
 const maxSubmission = 24 * 1024 * 1024;
 const entryId = '[a-f0-9-]{36}';
 const bankHeaders = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
@@ -88,12 +142,8 @@ async function submitExam(request, env) {
   } catch {
     return bankError('The upload could not be read or exceeds 24 MB.', 413);
   }
-  const fields = Object.fromEntries(form);
-  const details = validateExam(fields);
-  if (!details || form.get('blankConfirmed') !== 'yes') return bankError('Confirm the PDF is blank and complete the exam details.');
-  if (fields.duplicateConfirmed !== 'yes' && (await comparableExams(details, env)).length) {
-    return bankError('Similar exams already exist. Check them before contributing this copy.', 409);
-  }
+  if (form.get('blankConfirmed') !== 'yes') return bankError('Confirm that the PDF is blank and that you can share it.');
+  const details = detectUpload(form.get('filename'), form.get('firstPage'));
   const pages = form.getAll('page');
   if (!pages.length || pages.length > 40 || pages.some(page => typeof page === 'string' || page.size > 4 * 1024 * 1024)) {
     return bankError('A submission must have 1–40 readable pages, up to 4 MB per page.', 422);
@@ -111,23 +161,32 @@ async function submitExam(request, env) {
     return bankError('One or more pages could not be converted to a blank PDF.', 422);
   }
 
-  await savePendingExam(details, rendered, env);
-  return bankJson({ status: 'pending' }, 201);
+  const status = await savePendingExam(details, rendered, env);
+  return bankJson({ status }, status === 'pending' ? 201 : 200);
 }
 
 async function savePendingExam(details, rendered, env) {
+  const bytes = await rendered.pdf.arrayBuffer();
+  const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), byte => byte.toString(16).padStart(2, '0')).join('');
+  const existing = await env.DB.prepare('SELECT status FROM exam_bank WHERE content_hash = ?').bind(hash).first();
+  if (existing) return 'duplicate';
+
   const id = crypto.randomUUID();
   const key = 'exams/' + id + '.pdf';
   await env.BUCKET.put(key, rendered.pdf, { httpMetadata: { contentType: 'application/pdf' } });
   try {
-    await env.DB.prepare(
-      'INSERT INTO exam_bank (id, course, term, assessment, assessment_number, page_count, page_images) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    ).bind(id, details.course, details.term, details.assessment, details.number, rendered.pageImages.length,
-      JSON.stringify(rendered.pageImages)).run();
+    const result = await env.DB.prepare(
+      'INSERT INTO exam_bank (id, course, term, assessment, assessment_number, page_count, page_images, content_hash) ' +
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(content_hash) DO NOTHING'
+    ).bind(id, details.course, details.term, details.assessment, details.number ? Number(details.number) : null,
+      rendered.pageImages.length, JSON.stringify(rendered.pageImages), hash).run();
+    if (result.meta.changes) return 'pending';
   } catch (error) {
     await env.BUCKET.delete(key);
     throw error;
   }
+  await env.BUCKET.delete(key);
+  return 'duplicate';
 }
 
 const bankFields = 'id, course, term, assessment, assessment_number, page_count';
@@ -158,14 +217,6 @@ async function listExams(url, env) {
   return bankJson({ exams, terms: terms.map(row => row.term), courses });
 }
 
-async function comparableExams(details, env) {
-  const { results } = await env.DB.prepare(
-    "SELECT " + bankFields + " FROM exam_bank WHERE status = 'approved' AND course = ? AND term = ? AND assessment = ?" +
-    " AND (? IS NULL OR assessment_number IS NULL OR assessment_number = ?) LIMIT 10"
-  ).bind(details.course, details.term, details.assessment, details.number, details.number).all();
-  return results;
-}
-
 async function getBankPdf(id, editor, inline, env) {
   const entry = await env.DB.prepare(
     'SELECT ' + bankFields + ', page_images, status FROM exam_bank WHERE id = ?'
@@ -175,7 +226,7 @@ async function getBankPdf(id, editor, inline, env) {
   }
   const object = await env.BUCKET.get('exams/' + id + '.pdf');
   if (!object) return bankError('PDF not found.', 404);
-  const filename = [entry.course, entry.term, entry.assessment, entry.assessment_number].filter(Boolean).join('-') + '.pdf';
+  const filename = ([entry.course, entry.term, entry.assessment, entry.assessment_number].filter(Boolean).join('-') || 'pending-blank-assessment') + '.pdf';
   return new Response(object.body, { headers: {
     ...bankHeaders,
     'Content-Type': 'application/pdf',
@@ -188,8 +239,8 @@ async function getBankPdf(id, editor, inline, env) {
 async function handleExamBank(request, url, env) {
   const path = url.pathname;
   const mode = request.method;
-  if (mode === 'POST' && request.headers.get('origin') !== url.origin) return bankError('Forbidden.', 403);
-  const editor = isBankEditor(request, env);
+  if (mode === 'POST' && !allowedWriteOrigin(request, url)) return bankError('Forbidden.', 403);
+  const editor = request.headers.get('origin') !== githubPagesOrigin && isBankEditor(request, env);
   if (path === '/api/bank/session' && mode === 'GET') {
     return bankJson({ editor, signedIn: !!request.headers.get('oai-authenticated-user-id') });
   }
@@ -198,10 +249,6 @@ async function handleExamBank(request, url, env) {
   if (!env.DB || !env.BUCKET) return bankError('Exam bank storage is unavailable.', 503);
 
   if (path === '/api/bank/exams' && mode === 'GET') return listExams(url, env);
-  if (path === '/api/bank/similar' && mode === 'GET') {
-    const details = validateExam(Object.fromEntries(url.searchParams));
-    return bankJson({ exams: details ? await comparableExams(details, env) : [] });
-  }
   if (path === '/api/bank/submissions' && mode === 'POST') return submitExam(request, env);
   const pdfMatch = new RegExp('^/api/bank/pdf/(' + entryId + ')$').exec(path);
   if (pdfMatch && mode === 'GET') return getBankPdf(pdfMatch[1], editor, url.searchParams.get('view') === '1', env);
@@ -218,9 +265,18 @@ async function handleExamBank(request, url, env) {
       return bankError('Confirm the PDF has been checked before approving it.');
     }
     const state = input.action === 'approve' ? 'approved' : 'rejected';
-    const result = await env.DB.prepare(
-      "UPDATE exam_bank SET status = ? WHERE id = ? AND status = 'pending'"
-    ).bind(state, review[1]).run();
+    let result;
+    if (state === 'approved') {
+      const details = validateExam(input.details);
+      if (!details) return bankError('Verify the course, year, term, and assessment type before publishing.');
+      result = await env.DB.prepare(
+        "UPDATE exam_bank SET status = 'approved', course = ?, term = ?, assessment = ?, assessment_number = ? WHERE id = ? AND status = 'pending'"
+      ).bind(details.course, details.term, details.assessment, details.number, review[1]).run();
+    } else {
+      result = await env.DB.prepare(
+        "UPDATE exam_bank SET status = 'rejected' WHERE id = ? AND status = 'pending'"
+      ).bind(review[1]).run();
+    }
     if (!result.meta.changes) return bankError('This submission has already been reviewed or removed.', 409);
     return bankJson({ status: state });
   }

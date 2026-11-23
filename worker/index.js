@@ -1,6 +1,20 @@
 import { makePdf } from './pdf.js';
 
 const crowdmarkOrigin = 'https://app.crowdmark.com';
+const githubPagesOrigin = 'https://evan-lowry.github.io';
+const publicPagesEndpoint = /^\/api\/(?:export|bank\/(?:exams|submissions|pdf\/[a-f0-9-]{36}))$/;
+const pagesHeaders = {
+  'Access-Control-Allow-Origin': githubPagesOrigin,
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Expose-Headers': 'Content-Disposition, X-Assessment-Title, X-Bank-Status, X-Page-Count, X-First-Page, X-Last-Page',
+  'Vary': 'Origin',
+};
+
+function allowedWriteOrigin(request, url) {
+  const inbound = request.headers.get('origin');
+  return inbound === url.origin || (inbound === githubPagesOrigin && publicPagesEndpoint.test(url.pathname));
+}
 const scorePath = /^\/score\/([a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})\/?$/i;
 const privateHeaders = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
 
@@ -35,6 +49,7 @@ function templatePages(payload) {
   if (refs.length > 40) throw new ExportError(422, 'This booklet exceeds the 40-page export limit.');
 
   const pages = new Map();
+  let booklet;
   for (const ref of refs) {
     const row = ref.type === 'exam-master-pages' ? resource(ref) : undefined;
     const raw = row?.attributes;
@@ -54,13 +69,16 @@ function templatePages(payload) {
         !/^\/exam_masters\/[a-z0-9_-]+\/preview_jpegs\/[a-z0-9_-]+\.jpe?g$/i.test(url.pathname)) {
       throw new ExportError(422, 'Crowdmark returned an unrecognized blank-page format.');
     }
+    const assetBooklet = url.pathname.split('/')[2];
+    if (booklet && assetBooklet !== booklet) throw new ExportError(422, 'The blank pages come from different booklets.');
+    booklet = assetBooklet;
     pages.set(number, url);
   }
   const ordered = [...pages].sort(([a], [b]) => a - b);
   if (ordered.some(([number], index) => index > 0 && number !== ordered[index - 1][0] + 1)) {
     throw new ExportError(422, 'Some blank pages are missing from Crowdmark’s booklet.');
   }
-  return { ordered, title: String(master.attributes?.title || 'Crowdmark assessment').slice(0, 180) };
+  return { ordered, booklet };
 }
 
 async function upstream(url, init = {}) {
@@ -110,17 +128,10 @@ async function exportAssessment(request, env) {
     throw new ExportError(400, 'Paste a valid Crowdmark results link.');
   }
   const id = scoreId(input?.link);
-  const preparing = input?.prepare === true;
-  const details = validateExam(input?.contribution);
-  if (!preparing) {
-    if (!details || input.contribution.blankConfirmed !== 'yes') {
-      throw new ExportError(422, 'Contribute the exam before downloading this PDF.');
-    }
-    if (!env.DB || !env.BUCKET) throw new ExportError(503, 'The exam bank is currently unavailable.');
-    if (input.contribution.duplicateConfirmed !== 'yes' && (await comparableExams(details, env)).length) {
-      throw new ExportError(409, 'Similar exams already exist. Check them before contributing this copy.');
-    }
+  if (input?.submitForReview !== true) {
+    throw new ExportError(422, 'Refresh Clean Copy before preparing this PDF.');
   }
+  if (!env.DB || !env.BUCKET) throw new ExportError(503, 'The exam bank is currently unavailable.');
   let payload = input.template;
   if (payload?.data?.id !== id) {
     const response = await upstream(crowdmarkOrigin + '/api/v1/student/results/' + id, {
@@ -132,7 +143,7 @@ async function exportAssessment(request, env) {
     if (!response.ok) throw new Error('Crowdmark response failed.');
     payload = JSON.parse(new TextDecoder().decode(await readBytes(response, 4 * 1024 * 1024)));
   }
-  const { ordered, title } = templatePages(payload);
+  const { ordered, booklet } = templatePages(payload);
   const images = [];
   let total = 0;
   for (let start = 0; start < ordered.length; start += 4) {
@@ -150,21 +161,20 @@ async function exportAssessment(request, env) {
       images.push(cleanJpeg(image));
     }
   }
-  if (preparing) {
-    const preview = new FormData();
-    preview.set('exam', JSON.stringify({ title, count: images.length, first: ordered[0][0], last: ordered.at(-1)[0] }));
-    for (const image of images) preview.append('page', new Blob([image], { type: 'image/jpeg' }), 'page.jpg');
-    return new Response(preview, { headers: privateHeaders });
-  }
+  const details = detectFromLabel(booklet);
   const rendered = makePdf(images);
-  await savePendingExam(details, rendered, env);
+  const bankStatus = await savePendingExam(details, rendered, env);
   const { pdf, pageImages } = rendered;
+  const term = details.term && { W: 'Winter', S: 'Spring', F: 'Fall' }[details.term.at(-1)] + ' ' + details.term.slice(0, 4);
+  const course = details.course.replace(/([A-Z]+)(\d)/, '$1 $2');
+  const title = [term, course, details.assessment, details.number].filter(Boolean).join(' ') || 'Crowdmark assessment';
   const filename = (title.replace(/[^a-z\d]+/gi, '-').replace(/^-|-$/g, '') || 'crowdmark-assessment') + '-blank.pdf';
   return new Response(pdf, { headers: {
     ...privateHeaders,
     'Content-Type': 'application/pdf',
     'Content-Disposition': 'attachment; filename="' + filename + '"',
     'X-Assessment-Title': encodeURIComponent(title),
+    'X-Bank-Status': bankStatus,
     'X-Page-Images': JSON.stringify(pageImages),
     'X-Page-Count': String(images.length),
     'X-First-Page': String(ordered[0][0]),
@@ -172,47 +182,58 @@ async function exportAssessment(request, env) {
   } });
 }
 
+async function handleRequest(request, env) {
+  const url = new URL(request.url);
+  const { pathname } = url;
+  if (pathname.startsWith('/api/bank/')) {
+    try {
+      return await handleExamBank(request, url, env);
+    } catch (error) {
+      console.error('Exam bank request failed:', error.name, error.message.split('\n')[0]);
+      return bankError('The exam bank could not complete this request.', 502);
+    }
+  }
+  if (request.method === 'GET' && Object.hasOwn(APP_ASSETS, pathname)) {
+    const [contentType, content] = APP_ASSETS[pathname];
+    return new Response(content, { headers: {
+      'Content-Type': contentType,
+      'Cache-Control': 'public, max-age=3600',
+      'X-Content-Type-Options': 'nosniff',
+    } });
+  }
+  if (pathname === '/' && request.method === 'GET') {
+    return new Response(HTML, { headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Referrer-Policy': 'no-referrer',
+      'Content-Security-Policy': "default-src 'none'; script-src 'self' 'unsafe-inline'; worker-src 'self'; frame-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self' https://app.crowdmark.com; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+      ...privateHeaders,
+    } });
+  }
+  if (pathname !== '/api/export') return new Response('Not found', { status: 404 });
+  if (request.method !== 'POST') return new Response('Method not allowed', { status: 405, headers: { Allow: 'POST' } });
+  if (!allowedWriteOrigin(request, url)) {
+    return new Response('Forbidden', { status: 403 });
+  }
+  try {
+    return await exportAssessment(request, env);
+  } catch (error) {
+    const known = error instanceof ExportError;
+    return Response.json({ error: known ? error.message : 'The blank pages couldn’t be downloaded from Crowdmark. Try again in a moment.' }, {
+      status: known ? error.status : 502,
+      headers: privateHeaders,
+    });
+  }
+}
+
 export default {
   async fetch(request, env = {}) {
     const url = new URL(request.url);
-    const { pathname, origin } = url;
-    if (pathname.startsWith('/api/bank/')) {
-      try {
-        return await handleExamBank(request, url, env);
-      } catch (error) {
-        console.error('Exam bank request failed:', error.name, error.message.split('\n')[0]);
-        return bankError('The exam bank could not complete this request.', 502);
-      }
-    }
-    if (request.method === 'GET' && Object.hasOwn(APP_ASSETS, pathname)) {
-      const [contentType, content] = APP_ASSETS[pathname];
-      return new Response(content, { headers: {
-        'Content-Type': contentType,
-        'Cache-Control': 'public, max-age=3600',
-        'X-Content-Type-Options': 'nosniff',
-      } });
-    }
-    if (pathname === '/' && request.method === 'GET') {
-      return new Response(HTML, { headers: {
-        'Content-Type': 'text/html; charset=utf-8',
-        'Referrer-Policy': 'no-referrer',
-        'Content-Security-Policy': "default-src 'none'; script-src 'self' 'unsafe-inline'; worker-src 'self'; frame-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self' https://app.crowdmark.com; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
-        ...privateHeaders,
-      } });
-    }
-    if (pathname !== '/api/export') return new Response('Not found', { status: 404 });
-    if (request.method !== 'POST') return new Response('Method not allowed', { status: 405, headers: { Allow: 'POST' } });
-    if (request.headers.has('origin') && request.headers.get('origin') !== origin) {
-      return new Response('Forbidden', { status: 403 });
-    }
-    try {
-      return await exportAssessment(request, env);
-    } catch (error) {
-      const known = error instanceof ExportError;
-      return Response.json({ error: known ? error.message : 'The blank pages couldn’t be downloaded from Crowdmark. Try again in a moment.' }, {
-        status: known ? error.status : 502,
-        headers: privateHeaders,
-      });
-    }
+    const fromPages = request.headers.get('origin') === githubPagesOrigin && publicPagesEndpoint.test(url.pathname);
+    if (request.method === 'OPTIONS' && fromPages) return new Response(null, { status: 204, headers: pagesHeaders });
+    const response = await handleRequest(request, env);
+    if (!fromPages) return response;
+    const headers = new Headers(response.headers);
+    for (const [name, value] of Object.entries(pagesHeaders)) headers.set(name, value);
+    return new Response(response.body, { status: response.status, headers });
   },
 };

@@ -5,8 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="Download the blank assessment pages from a shareable Crowdmark results link.">
 <title>Clean Copy · Crowdmark PDF Export</title>
-<link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/pdf-viewer.css">
+<meta name="clean-copy-api" content="">
+<link rel="icon" href="./favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="./pdf-viewer.css">
 <style>
   :root {
     color-scheme: dark;
@@ -158,9 +159,6 @@
     .header-inner { grid-template-columns:1fr auto; gap:.45rem .9rem; }
     .header-search { grid-row:2; grid-column:1 / -1; }
   }
-  .duplicate-notice { border:1px solid #555; padding:.65rem; font-size:.875rem; }
-  .duplicate-notice a { color:var(--text); }
-  .duplicate-notice ul { margin:.25rem 0; padding-left:1.25rem; }
   .retry-form { display:flex; flex-wrap:wrap; gap:.55rem; margin-top:.6rem; }
   .retry-form input { flex:1; min-width:12rem; }
   .site-nav {
@@ -214,7 +212,7 @@
 <body>
 <header class="site-header">
   <div class="header-inner">
-    <a class="wordmark" href="#converter" aria-label="Clean Copy home"><img src="/favicon.svg" alt="">Clean Copy</a>
+    <a class="wordmark" href="#converter" aria-label="Clean Copy home"><img src="./favicon.svg" alt="">Clean Copy</a>
     <form class="header-search" id="course-search" role="search">
       <input id="bank-course" type="search" aria-label="Course code" placeholder="Find a course" maxlength="24" autocomplete="off">
       <div class="course-matches" id="course-matches" aria-label="Matching courses" hidden></div>
@@ -234,9 +232,10 @@
       </div>
       <div class="entry">
         <div class="links" id="links" role="group" aria-labelledby="links-label"></div>
+        <p class="status" id="prepare-note">Preparing also submits a blank copy for review. Use assessments you have permission to share.</p>
         <div class="form-buttons">
           <button type="button" class="secondary" id="add-link">Add another link</button>
-          <button type="submit" id="prepare">Prepare PDF</button>
+          <button type="submit" id="prepare" aria-describedby="prepare-note">Prepare PDF</button>
         </div>
       </div>
       <p class="status" id="status" role="status"></p>
@@ -251,7 +250,7 @@
           <select id="bank-term"><option value="">All terms</option></select>
         </label>
         <label class="form-field">Assessment type
-          <select id="bank-assessment"><option value="">All types</option><option>Midterm</option><option>Final</option><option>Quiz</option><option>Test</option><option>Other</option></select>
+          <select id="bank-assessment"><option value="">All types</option><option>Midterm</option><option>Final</option><option>Quiz</option><option>Test</option><option>Exam</option><option>Assignment</option><option>Lab</option><option>Tutorial</option><option>Project</option><option>Practice</option><option>Other</option></select>
         </label>
       </div>
       <div class="bank-actions">
@@ -296,28 +295,7 @@
     <label class="form-field" id="upload-field">Blank PDF
       <input id="contribution-file" type="file" accept="application/pdf,.pdf">
     </label>
-    <div class="contribution-fields">
-      <label class="form-field">Course code
-        <input name="course" placeholder="STAT 230" maxlength="16" required>
-      </label>
-      <label class="form-field">Year
-        <input name="year" type="number" min="1900" max="2099" placeholder="2025" required>
-      </label>
-      <label class="form-field">Term
-        <select name="season" required><option value="">Choose a term</option><option value="W">Winter</option><option value="S">Spring</option><option value="F">Fall</option></select>
-      </label>
-      <label class="form-field">Assessment type
-        <select name="assessment" required><option value="">Choose a type</option><option>Midterm</option><option>Final</option><option>Quiz</option><option>Test</option><option>Other</option></select>
-      </label>
-      <label class="form-field">Assessment number (optional)
-        <input name="assessmentNumber" type="number" min="1" max="99" placeholder="2">
-      </label>
-    </div>
-    <div class="duplicate-notice" id="duplicate-notice" hidden>
-      <strong>Similar exams already in the bank</strong>
-      <ul id="duplicate-list"></ul>
-      <label class="check-row"><input type="checkbox" id="duplicate-confirm"> This copy is a different version or a clearer scan.</label>
-    </div>
+    <p class="file-status">Clean Copy detects the exam details. An editor checks them before publishing.</p>
     <p class="file-status" id="contribution-status" role="status"></p>
     <label class="check-row"><input name="blankConfirmed" type="checkbox" required> <span id="contribution-attestation">I checked that every page is blank and I have permission to share this exam.</span></label>
     <div class="bank-actions">
@@ -347,6 +325,7 @@
   </section>
 </template>
 <script>
+  const apiBase = document.querySelector('meta[name="clean-copy-api"]').content;
   const form = document.querySelector('#export-form');
   const fields = document.querySelector('#links');
   const linkTemplate = document.querySelector('#link-template');
@@ -375,7 +354,6 @@
   let viewerSequence = 0;
   let pdfViewer;
   let pdfTask;
-  let pdfBuilder;
 
   function syncViewerPage(page, count) {
     pageCount.textContent = page + ' / ' + count;
@@ -387,11 +365,11 @@
     viewerMessage.textContent = 'Loading PDF…';
     viewerMessage.hidden = false;
     try {
-      const pdfjs = await import('/pdfjs.mjs');
-      const components = await import('/pdf-viewer.mjs');
+      const pdfjs = await import('./pdfjs.mjs');
+      const components = await import('./pdf-viewer.mjs');
       const data = source.blob ? new Uint8Array(await source.blob.arrayBuffer()) : undefined;
       if (viewerSequence !== sequence) return;
-      pdfjs.GlobalWorkerOptions.workerSrc = '/pdfjs-worker.mjs';
+      pdfjs.GlobalWorkerOptions.workerSrc = new URL('./pdfjs-worker.mjs', location.href).href;
       if (!pdfViewer) {
         const eventBus = new components.EventBus();
         pdfViewer = new components.PDFViewer({
@@ -607,12 +585,12 @@
     }
   }
 
-  async function requestExport(link, contribution) {
+  async function requestExport(link) {
     const template = await getBlankReferences(link);
-    const response = await fetch('/api/export', {
+    const response = await fetch(apiBase + '/api/export', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ link, template, prepare: !contribution, contribution }),
+      body: JSON.stringify({ link, template, submitForReview: true }),
       signal: AbortSignal.timeout(60000),
     });
     if (!response.ok) {
@@ -622,59 +600,37 @@
     return response;
   }
 
-  function startConverterDownload(row) {
-    if (!row.downloadUrl) {
-      openContribution({ title: row.title.textContent, submit: row.submitContribution });
-      return;
-    }
-    const link = document.createElement('a');
-    link.href = row.downloadUrl;
-    link.download = row.filename;
-    link.click();
-  }
-
-  async function unlockConverterExport(link, row, contribution) {
-    const response = await requestExport(link, contribution);
-    if (!response.headers.get('Content-Type')?.startsWith('application/pdf')) {
-      throw new Error('The export service returned an unexpected response.');
-    }
-    const filename = /filename="([^"]+)"/.exec(response.headers.get('Content-Disposition') || '')?.[1];
-    const pdf = await response.blob();
-    if (!row.card.isConnected) return;
-    row.downloadUrl = objectUrl(pdf);
-    row.filename = filename || 'crowdmark-assessment-blank.pdf';
-    if (activePreview === row.previewButton) {
-      previewOpen.href = row.downloadUrl;
-      previewOpen.hidden = false;
-    }
-    startConverterDownload(row);
-  }
-
   async function prepareAssessment(link, row) {
     row.retry.disabled = true;
     row.details.classList.remove('error');
     row.details.textContent = 'Preparing blank PDF…';
     try {
-      const payload = await (await requestExport(link)).formData();
-      const { title, first, last, count } = JSON.parse(payload.get('exam'));
-      const pages = await Promise.all(payload.getAll('page').map(async page => new Uint8Array(await page.arrayBuffer())));
-      pdfBuilder ||= import('/pdf-builder.mjs');
-      const { makePdf } = await pdfBuilder;
-      const { pdf } = makePdf(pages);
+      const response = await requestExport(link);
+      if (!response.headers.get('Content-Type')?.startsWith('application/pdf')) throw new Error('The export service returned an unexpected response.');
+      const title = decodeURIComponent(response.headers.get('X-Assessment-Title') || 'Crowdmark assessment');
+      const first = Number(response.headers.get('X-First-Page'));
+      const last = Number(response.headers.get('X-Last-Page'));
+      const count = Number(response.headers.get('X-Page-Count'));
+      const filename = /filename="([^"]+)"/.exec(response.headers.get('Content-Disposition') || '')?.[1] || 'crowdmark-assessment.pdf';
+      const bankStatus = response.headers.get('X-Bank-Status');
+      const pdf = await response.blob();
       if (!row.card.isConnected) return false;
+      const url = objectUrl(pdf);
+      const download = () => {
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        link.click();
+      };
       row.title.textContent = title;
-      row.details.textContent = count + (count === 1 ? ' blank page.' : ' blank pages.') +
-        (first > 1 ? ' Booklet pages ' + (first === last ? first : first + '–' + last) + '.' : '');
-      row.submitContribution = details => unlockConverterExport(link, row, details);
-      row.openPreview = () => showPdf(row.previewButton, {
-        blob: pdf,
-        inlineUrl: row.downloadUrl,
-        download: () => startConverterDownload(row),
-      });
+      row.details.textContent = count + (count === 1 ? ' blank page' : ' blank pages') +
+        (first > 1 ? ' · Booklet pages ' + (first === last ? first : first + '–' + last) : '') +
+        (bankStatus === 'duplicate' ? ' · Already submitted' : ' · Submitted for review');
+      row.openPreview = () => showPdf(row.previewButton, { blob: pdf, inlineUrl: url, download });
       row.previewButton.hidden = false;
       row.previewButton.addEventListener('click', row.openPreview);
       row.download.hidden = false;
-      row.download.addEventListener('click', () => startConverterDownload(row));
+      row.download.addEventListener('click', download);
       row.retryGroup.hidden = true;
       row.actions.hidden = false;
       return true;

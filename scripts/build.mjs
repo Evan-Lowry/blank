@@ -14,10 +14,20 @@ const assets = {
   '/pdfjs-worker.mjs': [js, await read('node_modules/pdfjs-dist/build/pdf.worker.min.mjs')],
   '/pdf-viewer.mjs': [js, await read('node_modules/pdfjs-dist/web/pdf_viewer.mjs')],
   '/pdf-viewer.css': ['text/css; charset=utf-8', await read('node_modules/pdfjs-dist/web/pdf_viewer.css')],
-  '/pdf-builder.mjs': [js, pdf],
   '/favicon.svg': ['image/svg+xml', await read('web/favicon.svg')],
 };
-const html = template.replace('<!-- exam-bank-script -->', () => '<script>\n' + bankScript + '\n</script>');
+let html = template.replace('<!-- exam-bank-script -->', () => '<script>\n' + bankScript + '\n</script>');
+if (process.argv.includes('--pages')) {
+  const backend = 'https://crowdmark-clean-copy.rbrlwy.chatgpt.site';
+  html = html.replace('name="clean-copy-api" content=""', 'name="clean-copy-api" content="' + backend + '"');
+  await mkdir('pages-dist', { recursive: true });
+  await Promise.all([
+    writeFile('pages-dist/index.html', html),
+    writeFile('pages-dist/.nojekyll', ''),
+    ...Object.entries(assets).map(([path, [, content]]) => writeFile('pages-dist' + path, content)),
+  ]);
+  process.exit(0);
+}
 await mkdir('dist/server', { recursive: true });
 await mkdir('dist/.openai', { recursive: true });
 await cp('.openai/hosting.json', 'dist/.openai/hosting.json');
