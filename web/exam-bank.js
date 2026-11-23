@@ -351,7 +351,7 @@ async function readPdf(file) {
     isEvalSupported: false,
     useWasm: false,
     enableXfa: false,
-  }).promise;
+  });
 }
 
 contributionFile.addEventListener('change', async () => {
@@ -364,8 +364,9 @@ contributionFile.addEventListener('change', async () => {
   contributionStatus.textContent = 'Reading the first page…';
   contributionSubmit.disabled = true;
   try {
-    const doc = await readPdf(file);
+    const task = await readPdf(file);
     try {
+      const doc = await task.promise;
       const first = await doc.getPage(1);
       const content = await first.getTextContent();
       const text = content.items.map(item => item.str || '').join(' ');
@@ -373,7 +374,7 @@ contributionFile.addEventListener('change', async () => {
       uploadAutofill = prefillContribution(inferMetadata(filename, text), prefilled);
       contributionStatus.textContent = 'Check the details and fill in anything missing.';
     } finally {
-      await doc.destroy();
+      await task.destroy();
     }
   } catch {
     if (request === uploadCheck) contributionStatus.textContent = 'Could not read the first page. Check the file and fill in the exam details.';
@@ -383,11 +384,12 @@ contributionFile.addEventListener('change', async () => {
 });
 
 async function renderUpload(file) {
-  const doc = await readPdf(file);
+  const task = await readPdf(file);
   const canvas = document.createElement('canvas');
   const context = canvas.getContext('2d', { alpha: false });
   const pages = [];
   try {
+    const doc = await task.promise;
     if (!doc.numPages || doc.numPages > 40) throw new Error('A submission must have 1–40 pages.');
     let total = 0;
     for (let pageNumber = 1; pageNumber <= doc.numPages; pageNumber++) {
@@ -407,7 +409,7 @@ async function renderUpload(file) {
     }
     return pages;
   } finally {
-    await doc.destroy();
+    await task.destroy();
   }
 }
 
