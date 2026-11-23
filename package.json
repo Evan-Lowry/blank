@@ -5,10 +5,17 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "build:pages": "node scripts/build.mjs --pages",
-    "dev": "node scripts/serve.mjs"
+    "dev": "node scripts/serve.mjs",
+    "cf:dev": "npm run build && wrangler dev",
+    "cf:db:local": "wrangler d1 migrations apply blank --local",
+    "cf:db:remote": "wrangler d1 migrations apply blank --remote",
+    "deploy": "npm run build && wrangler deploy",
+    "cf:push-local": "node scripts/push-local.mjs"
   },
   "dependencies": {
-    "fflate": "0.8.3",
-    "pdfjs-dist": "6.5.438"
+    "fflate": "0.8.3"
+  },
+  "devDependencies": {
+    "wrangler": "4.166.0"
   }
 }

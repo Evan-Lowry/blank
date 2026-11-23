@@ -1,4 +1,10 @@
 dist/
 node_modules/
-
 pages-dist/
+.local/
+.wrangler/
+.dev.vars
+.env
+.env.*
+.dev.vars.*
+.claude/settings.local.json

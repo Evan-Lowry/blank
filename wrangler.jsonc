@@ -1,0 +1,28 @@
+{
+  // Cloudflare Workers deployment. Run `npm run deploy` after the one-time setup in DEPLOY.md.
+  "name": "blank",
+  "main": "dist/server/index.js",
+  "compatibility_date": "2025-06-01",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "blank",
+      "database_id": "204bc842-bc0b-412f-b265-3173f9f4f9f2",
+      "migrations_dir": "drizzle"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "BUCKET",
+      "bucket_name": "blank-assessments"
+    }
+  ],
+  // Publishing pauses (conversions return an error) when either limit is reached, so storage can stay inside the free plan.
+  // About 130 KB per page: 30000 pages is roughly 4 GB of the 10 GB free R2 storage.
+  "vars": {
+    "MAX_STORED_PAGES": "30000",
+    "MAX_DAILY_PUBLISHES": "300",
+    "MAX_DAILY_SYNC_PROFILES": "500"
+  },
+  "observability": { "enabled": true }
+}
