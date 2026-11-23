@@ -516,7 +516,9 @@
     previewOpen.hidden = !source.inlineUrl;
     if (source.inlineUrl) previewOpen.href = source.inlineUrl;
     previewDownload.hidden = !source.download;
+    // Safari can report PDF support while leaving an embedded PDF blank.
     const native = source.inlineUrl && navigator.pdfViewerEnabled &&
+      navigator.vendor !== 'Apple Computer, Inc.' &&
       !/CodexBrowser\b/i.test(navigator.userAgent);
     viewerFrame.hidden = !native;
     previewFallback.hidden = !native;
