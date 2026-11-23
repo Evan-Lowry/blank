@@ -3,33 +3,103 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Download the blank assessment pages from a shareable Crowdmark results link.">
-<title>Clean Copy · Crowdmark PDF Export</title>
+<meta name="description" content="Get the blank pages from a Crowdmark results link, and browse a Waterloo assessment bank.">
+<title>blank. · Blank PDFs and assessment bank</title>
 <meta name="clean-copy-api" content="">
 <link rel="icon" href="./favicon.svg" type="image/svg+xml">
 <style>
   :root {
     color-scheme: dark;
-    --background: #181818;
-    --panel: #202020;
-    --field: #181818;
+    --page: #181818;
+    --card: #202020;
+    --field: #2a2a2a;
+    --header: #202020;
     --border: #373737;
+    --border-strong: #555555;
     --text: #f3f3f3;
     --muted: #aaaaaa;
-    --accent: #ededed;
-    font: 100%/1.5 system-ui, sans-serif;
+    --placeholder: #8d8d8d;
+    --accent: #3d8bff;
+    --accent-hover: #5f9fff;
+    --on-accent: #0f1420;
+    --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5 6 6.5 11 1.5' fill='none' stroke='%23aaaaaa' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    --hover: #303030;
+    --stripe: #1d1d1d;
+    --selected: #2c2c2c;
+    --error: #ffb2ac;
+    --shadow: #0008;
+    /* background: two aurora colours (set any to transparent to drop it) and the contour line colour */
+    --aurora-1: #6fd08c44;
+    --aurora-2: #3d8bff55;
+    --contour: #4a4a4a;
+    --radius: .5rem;
+    font: 100%/1.5 Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
   }
 
   *, *::before, *::after { box-sizing: border-box; }
-  body { margin: 0; min-height: 100vh; background: var(--background); color: var(--text); }
-  [hidden] { display: none !important; }
-
-  main {
-    width: min(100rem, calc(100% - clamp(2rem, 8vw, 7rem)));
-    margin-inline: auto;
-    padding-block: clamp(2.1rem, 6vh, 4.5rem) 3rem;
+  body { margin: 0; min-height: 100vh; display: flex; flex-direction: column; background: var(--page); color: var(--text); isolation: isolate; }
+  body { position: relative; overflow-x: clip; }
+  body::before, body::after {
+    content: ''; position: absolute; inset: 0 0 auto 0; height: max(100vh, 38rem); z-index: -1; pointer-events: none; will-change: transform;
   }
-  .workspace { width: min(100%, 38rem); margin-inline: auto; }
+  body::before {
+    background-image:
+      radial-gradient(ellipse 60% 40% at 30% 0%, var(--aurora-1), transparent 70%),
+      radial-gradient(ellipse 60% 40% at 75% 6%, var(--aurora-2), transparent 70%);
+    transform: translate3d(0, calc(var(--scroll-y, 0px) * .5), 0);
+  }
+  body::after {
+    background-image:
+      repeating-radial-gradient(circle at 20% 30%, transparent 0 17px, var(--contour) 17px 18px),
+      repeating-radial-gradient(circle at 88% 78%, transparent 0 17px, var(--contour) 17px 18px);
+    -webkit-mask-image: radial-gradient(ellipse 80% 62% at 50% 0%, #000 0%, transparent 78%);
+    mask-image: radial-gradient(ellipse 80% 62% at 50% 0%, #000 0%, transparent 78%);
+    transform: translate3d(0, calc(var(--scroll-y, 0px) * .3), 0);
+  }
+  @media (prefers-reduced-motion: reduce) { body::before, body::after { transform: none; } }
+  [hidden] { display: none !important; }
+  a { color: var(--text); }
+
+  /* header */
+  .site-header { background: var(--header); border-bottom: 1px solid var(--border); }
+  .header-inner {
+    width: min(68rem, calc(100% - 2rem));
+    margin-inline: auto;
+    min-height: 4rem;
+    display: grid;
+    grid-template-columns: auto minmax(12rem, 1fr) auto;
+    align-items: center;
+    gap: clamp(.75rem, 3vw, 2rem);
+    padding-block: .6rem;
+  }
+  .wordmark { color: var(--text); font-size: 1.4rem; font-weight: 700; letter-spacing: -.03em; text-decoration: none; white-space: nowrap; }
+  .wordmark .dot { color: var(--accent); }
+  .header-nav { justify-self: end; display: flex; gap: 1.1rem; }
+  .header-search { position: relative; margin: 0; }
+  .header-search-slot:empty { display: none; }
+  .header-search input { min-height: 2.5rem; }
+  .header-link { color: var(--muted); text-decoration: none; font-size: .95rem; font-weight: 600; white-space: nowrap; padding: .35rem .1rem; border-bottom: 2px solid transparent; }
+  .header-link:hover, .header-link[aria-current] { color: var(--text); border-bottom-color: var(--accent); }
+  .course-matches {
+    display: grid; position: absolute; z-index: 2; inset-inline: 0; top: calc(100% + .3rem);
+    background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: .3rem;
+    box-shadow: 0 8px 24px var(--shadow);
+  }
+  .course-matches a { color: var(--text); font-size: .9rem; padding: .5rem .65rem; border-radius: .35rem; text-decoration: none; }
+  .course-matches a:hover, .course-matches a:focus-visible, .course-matches a.active { background: var(--hover); }
+  @media (max-width: 40rem) {
+    .header-inner { grid-template-columns: 1fr auto; gap: .5rem 1rem; }
+    .header-search-slot { grid-row: 2; grid-column: 1 / -1; }
+  }
+
+  /* layout */
+  main {
+    width: min(68rem, calc(100% - 2rem));
+    margin-inline: auto;
+    padding-block: clamp(1.75rem, 5vh, 3.5rem) 3rem;
+  }
+  .workspace { width: 100%; }
+  .workspace:not(.split) #converter-view > * { max-width: 44rem; margin-inline: auto; }
   .workspace.split {
     width: 100%;
     display: grid;
@@ -37,197 +107,219 @@
     align-items: start;
     gap: clamp(1rem, 3vw, 2.5rem);
   }
-  h1 {
-    margin: 0 0 1.25rem;
-    font-size: clamp(1.75rem, 5vw, 2.25rem);
-    font-weight: 650;
-    letter-spacing: -.04em;
-    line-height: 1.15;
-    text-wrap: balance;
+  h1 { margin: 0 0 1.1rem; font-size: clamp(1.75rem, 5vw, 2.25rem); font-weight: 750; letter-spacing: -.02em; line-height: 1.2; text-wrap: balance; }
+  .panel { padding: .5rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); }
+
+  /* form controls */
+  input, select {
+    width: 100%; min-width: 0; min-height: 2.9rem; padding: .6rem .85rem;
+    border: 1px solid var(--border); border-radius: var(--radius); background: var(--field); color: var(--text); font: inherit;
   }
-  .panel {
-    padding: clamp(1rem, 4vw, 1.5rem);
-    border: 1px solid var(--border);
-    background: var(--panel);
+  select { appearance: none; padding-right: 2.5rem; background-image: var(--chevron); background-repeat: no-repeat; background-position: right .9rem center; background-size: .8rem; }
+  input:focus, select:focus { border-color: var(--accent); }
+  input::placeholder { color: var(--placeholder); }
+  button, .download {
+    display: inline-flex; justify-content: center; align-items: center; min-height: 2.9rem; padding: .55rem 1.1rem;
+    border: 1px solid transparent; border-radius: var(--radius); background: var(--accent); color: var(--on-accent);
+    font: inherit; font-weight: 650; text-decoration: none; white-space: nowrap; cursor: pointer;
   }
-  .field-heading {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    justify-content: space-between;
-    column-gap: 1rem;
-    row-gap: .25rem;
-    margin-bottom: .55rem;
-    font-size: .875rem;
-  }
-  #links-label { font-weight: 650; }
-  .help { color: var(--muted); text-decoration-thickness: 1px; text-underline-offset: .19em; }
-  .help:hover { color: var(--text); }
-  .entry, .links { display: grid; gap: .65rem; }
+  button:hover, .download:hover { background: var(--accent-hover); }
+  button:disabled { opacity: .65; cursor: wait; }
+  .secondary { background: transparent; border-color: var(--border-strong); color: var(--text); }
+  .secondary:hover { background: var(--hover); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* footer and about */
+  .site-footer { margin-top: auto; border-top: 1px solid var(--border); background: var(--header); }
+  .footer-inner { width: min(68rem, calc(100% - 2rem)); margin-inline: auto; display: flex; flex-wrap: wrap; gap: .4rem 1.25rem; padding-block: 1rem; }
+  .footer-inner a { color: var(--muted); font-size: .85rem; text-decoration: none; }
+  .footer-inner a:hover { color: var(--text); text-decoration: underline; }
+  .prose { max-width: 40rem; }
+  .prose p { margin: 0 0 1rem; color: var(--muted); }
+  .prose a { color: var(--text); }
+  .prose-title { margin: 1.75rem 0 .5rem; font-size: 1.05rem; }
+  .bookmarklet { display: inline-block; padding: .55rem 1rem; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--card); color: var(--text); font-weight: 650; text-decoration: none; cursor: grab; }
+  .bookmarklet:hover { background: var(--hover); }
+
+  /* home */
+  .hero { padding: clamp(2.5rem, 9vh, 5.5rem) 1rem clamp(2rem, 6vh, 3.5rem); text-align: center; border-bottom: 1px solid var(--border); }
+  .hero h1 { margin: 0 0 .6rem; font-size: clamp(2rem, 6vw, 3rem); letter-spacing: -.035em; }
+  .hero-alt { margin: 0; color: var(--muted); }
+  .hero-alt a { color: var(--text); }
+  .hero-search-slot { width: min(100%, 36rem); margin: 0 auto 1.25rem; text-align: left; }
+  .hero-search-slot input { min-height: 3.25rem; font-size: 1.05rem; padding-inline: 1.1rem; }
+  .home-body { width: min(100% - 2rem, 68rem); margin: 0 auto; padding: 1.75rem 0 3rem; }
+  .more-link { display: inline-block; margin-top: .9rem; color: var(--muted); font-size: .9rem; }
+  .section-title { margin: 1.75rem 0 .6rem; font-size: 1.05rem; }
+
+  /* shared: small row buttons. Gold is reserved for the main action on a page. */
+  .result .download, .exam-actions .download { background: transparent; border-color: var(--border-strong); color: var(--text); }
+  .result .download:hover, .exam-actions .download:hover { background: var(--hover); }
+
+  /* shared: small row buttons */
+  .result button, .result .download { min-height: 2rem; padding: .2rem .7rem; font-size: .82rem; }
+
+  /* converter */
+  .field-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: .25rem 1rem; margin-bottom: .35rem; color: var(--muted); font-size: .85rem; }
+  .help { color: var(--muted); }
+  .entry, .links { display: grid; gap: .6rem; }
   .link-row { display: flex; gap: .5rem; }
   .link-row input { flex: 1; }
-  .form-buttons { display: flex; flex-wrap: wrap; gap: .65rem; }
+  .form-buttons { display: flex; flex-wrap: wrap; gap: .6rem; }
   #prepare { flex: 1; }
-  input {
-    width: 100%;
-    min-width: 0;
-    min-height: 3rem;
-    padding: .68rem .85rem;
-    border: 1px solid #555555;
-    border-radius: .5rem;
-    background: var(--field);
-    color: var(--text);
-    font: inherit;
-  }
-  input::placeholder { color: #a1a1a1; }
-  button, .download {
-    display: inline-flex;
-    justify-content: center;
-    align-items: center;
-    min-height: 3rem;
-    padding: .68rem 1rem;
-    border: 1px solid transparent;
-    border-radius: .5rem;
-    background: var(--accent);
-    color: #181818;
-    font: inherit;
-    font-weight: 700;
-    text-decoration: none;
-    white-space: nowrap;
-    cursor: pointer;
-  }
-  button:hover, .download:hover { background: #ffffff; }
-  button:disabled { opacity: .7; cursor: wait; }
-  :focus-visible { outline: 2px solid #c0c0c0; outline-offset: 3px; }
-
-  .status { margin: .85rem 0 0; color: var(--muted); font-size: .875rem; }
+  .status { margin: .75rem 0 0; color: var(--muted); font-size: .9rem; }
   .status:empty { margin: 0; }
-  .status.error { color: #ffb2ac; }
-  .result { margin-top: .85rem; }
-  .result h2 { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
-  .result .details { margin: .2rem 0 0; color: var(--muted); font-size: .875rem; }
+  .status.error, .result .details.error { color: var(--error); }
+  #export-form { padding-bottom: 1.25rem; border-bottom: 1px solid var(--border); }
+  #batch-actions { margin: 0; padding: .75rem 0 0; align-items: center; }
+  #batch-actions button { min-height: 2rem; padding: .2rem .7rem; font-size: .82rem; }
+  #results { margin-top: 1.25rem; border-top: 1px solid var(--border); }
+  #results:empty { display: none; }
+  .result { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0 .75rem; padding: .6rem; border-bottom: 1px solid var(--border); }
+  .result:nth-child(even) { background: var(--stripe); }
+  .result h2 { grid-column: 1; margin: 0; font-size: .95rem; overflow-wrap: anywhere; }
+  .result .details { grid-column: 1; margin: 0; color: var(--muted); font-size: .85rem; }
+  .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .35rem; }
+  .result .actions { grid-column: 2; grid-row: 1 / span 2; }
+  .retry-form { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .5rem; }
+  .retry-form input { flex: 1; min-width: 12rem; min-height: 2.25rem; }
+  .result.preview-selected { background: var(--selected); box-shadow: inset 3px 0 var(--accent); }
+  .result.preview-selected .download { display: none; }
 
-  .result .details.error { color: #ffb2ac; }
-  .actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .85rem; }
-  .secondary {
-    background: transparent;
-    border-color: #555555;
-    color: var(--text);
+  /* viewer */
+  .viewer { position: sticky; top: 1rem; display: flex; flex-direction: column; height: calc(100dvh - 9.25rem); min-height: 22rem; padding: .5rem; }
+  .viewer-frame { width: 100%; flex: 1; min-height: 0; display: block; border: 0; border-radius: .4rem; background: var(--field); }
+  .viewer-message { margin: .5rem; color: var(--muted); font-size: .9rem; }
+  #preview-back { display: none; }
+
+  /* exam bank */
+  .back-link { display: inline-block; margin-bottom: .6rem; color: var(--muted); font-size: .9rem; text-decoration: none; }
+  .back-link::before { content: '\2190'; margin-right: .4rem; }
+  .back-link:hover { color: var(--text); }
+  .bank-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem 1rem; margin-bottom: 1.1rem; }
+  .bank-head h1 { margin: 0; }
+  .bank-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; }
+  .bank-toolbar select { width: auto; min-width: 10rem; min-height: 2.5rem; color: var(--text); }
+  .bank-toolbar button { min-height: 2.5rem; font-size: .9rem; font-weight: 600; }
+  .bank-status { margin: .75rem 0; color: var(--muted); font-size: .9rem; }
+  .bank-status:empty { display: none; }
+  /* one list style: course list, exam list, recently added */
+  .list { container-type: inline-size; margin-top: .5rem; }
+  .list-head, .list-row { display: grid; grid-template-columns: var(--cols); align-items: center; gap: 1rem; padding: .7rem .75rem; }
+  .list-head { padding-block: .5rem; border-block: 1px solid var(--border); background: transparent; color: var(--muted); font-size: .78rem; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; }
+  .list-row { border-bottom: 1px solid var(--border); background: transparent; color: var(--text); text-decoration: none; }
+  .list-row:nth-child(odd) { background: #ffffff09; }
+  a.list-row:hover { background: var(--hover); }
+  .cell-strong { font-weight: 650; }
+  .cell-muted { color: var(--muted); }
+  .cell-go { color: var(--muted); text-align: right; }
+  .list.courses { --cols: minmax(0, 1fr) 9rem 12rem 1rem; }
+  .list.exams { --cols: 11rem minmax(0, 1fr) 6rem 15rem; }
+  .list.saved { --cols: 8rem 10rem minmax(0, 1fr) 15rem; }
+  .list.lists { --cols: minmax(0, 1fr) 10rem 1rem; }
+  .cell-meta { display: none; }
+  .in-list { display: inline-block; width: .45rem; height: .45rem; margin-right: .55rem; border-radius: 50%; background: var(--accent); vertical-align: middle; }
+  .in-list[hidden] { display: none; }
+  .rename-input { font: inherit; letter-spacing: inherit; min-height: 0; padding: .05rem .4rem; width: min(100%, 24rem); }
+  .menu-label { padding: .35rem .7rem .25rem; color: var(--muted); font-size: .75rem; letter-spacing: .05em; text-transform: uppercase; }
+  .menu-check { display: inline-block; width: 1.1rem; color: var(--accent); }
+  .menu-input { width: 12.5rem; min-height: 2.25rem; margin: .2rem .3rem .3rem; font-size: .9rem; }
+  .cell-course a { color: var(--text); text-decoration: none; }
+  .cell-course a:hover { text-decoration: underline; }
+  .list.recent { --cols: 9rem 12rem minmax(0, 1fr); }
+  .exam-actions { display: flex; gap: .5rem; justify-content: flex-end; }
+  .exam-actions button, .exam-actions .download { min-height: 2.25rem; padding: .2rem .85rem; font-size: .875rem; }
+  .exam-actions .more-button { padding-inline: .6rem; }
+  .list-row.preview-selected { background: var(--selected); box-shadow: inset 3px 0 var(--accent); }
+  .list-row.preview-selected .download { display: none; }
+  @container (max-width: 40rem) {
+    .list-head { display: none; }
+    .courses .list-row, .lists .list-row { grid-template-columns: minmax(0, 1fr) auto auto; }
+    .courses .cell-latest { display: none; }
+    .recent .list-row { grid-template-columns: 7rem minmax(0, 1fr); }
+    .recent .cell-term { display: none; }
+    .exams .list-row { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "type actions" "term actions"; gap: 0 1rem; }
+    .exams .cell-type { grid-area: type; }
+    .exams .cell-term { grid-area: term; font-size: .85rem; }
+    .exams .cell-pages { display: none; }
+    .exams .exam-actions { grid-area: actions; }
+    .saved .list-row { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "type actions" "meta actions"; gap: 0 1rem; }
+    .saved .cell-type { grid-area: type; }
+    .saved .cell-course, .saved .cell-term { display: none; }
+    .saved .cell-meta { display: block; grid-area: meta; font-size: .85rem; }
+    .saved .exam-actions { grid-area: actions; }
   }
-  .secondary:hover { background: #303030; }
-  .viewer {
-    position: sticky;
-    top: 1rem;
+  @container (max-width: 26rem) {
+    .exams .list-row { grid-template-columns: 1fr; grid-template-areas: "type" "term" "actions"; gap: .15rem; }
+    .saved .list-row { grid-template-columns: 1fr; grid-template-areas: "type" "meta" "actions"; gap: .15rem; }
+    .exams .exam-actions, .saved .exam-actions { justify-content: flex-start; margin-top: .5rem; }
   }
-  .viewer-frame { width:100%; height:70vh; display:block; border:1px solid var(--border); background:var(--field); }
-  .viewer-message { margin:.25rem 0; color:var(--muted); font-size:.875rem; }
-  .preview-selected { background:#282828; }
-  .preview-selected .actions > .download, .preview-selected .bank-actions > .download { display:none; }
-  #preview-back { display:none; }
-  .bank-entry.preview-selected { box-shadow:-3px 0 var(--accent); }
-  .site-header { border-bottom:1px solid var(--border); background:var(--panel); }
-  .header-inner {
-    width:min(78rem, calc(100% - 2rem));
-    margin-inline:auto;
-    min-height:4.25rem;
-    display:grid;
-    grid-template-columns:auto minmax(12rem, 1fr) auto;
-    align-items:center;
-    gap:clamp(.65rem, 3vw, 2rem);
-    padding-block:.65rem;
+  .row-menu { position: fixed; z-index: 20; min-width: 10rem; padding: .3rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); box-shadow: 0 8px 24px var(--shadow); }
+  .menu-item { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; justify-content: flex-start; width: 100%; min-height: 2.25rem; padding: .35rem .7rem; border: 0; background: none; color: var(--text); font-size: .9rem; font-weight: 400; border-radius: .35rem; }
+  .menu-item:hover { background: var(--hover); }
+  .course-matches .recent-label { padding: .35rem .65rem .1rem; color: var(--muted); font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; }
+  dialog { width: min(26rem, calc(100% - 2rem)); padding: 1.25rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); color: var(--text); }
+  dialog::backdrop { background: #000a; }
+  dialog h2 { margin: 0 0 .25rem; font-size: 1.15rem; }
+  .sync-code { margin: .75rem 0; padding: .7rem .9rem; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--field); font: 600 1.25rem ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-align: center; user-select: all; }
+  .choice { display: flex; align-items: center; gap: .55rem; padding: .35rem 0; }
+  .choice input { width: auto; min-height: 0; }
+  dialog .actions { margin-top: 1rem; }
+  @media (max-width: 36rem) {
+    .bank-toolbar select { min-width: 0; }
   }
-  .wordmark { display:inline-flex; align-items:center; gap:.52rem; color:var(--text); font-weight:720; text-decoration:none; white-space:nowrap; }
-  .wordmark img { width:1.65rem; height:1.65rem; }
-  .header-search { position:relative; margin:0; }
-  .header-search input { width:100%; min-height:2.6rem; padding:.42rem .7rem; }
-  .header-link { color:var(--muted); text-decoration:none; font-size:.9rem; white-space:nowrap; border-block-end:1px solid transparent; }
-  .header-link:hover, .header-link[aria-current] { color:var(--text); border-block-end-color:currentColor; }
-  .course-matches {
-    display:grid; gap:.15rem; position:absolute; z-index:2; inset-inline:0; top:calc(100% + .28rem);
-    background:var(--panel); border:1px solid var(--border); padding:.3rem;
-  }
-  .course-matches a { color:var(--text); font-size:.875rem; padding:.4rem .55rem; text-decoration:none; }
-  .course-matches a:hover, .course-matches a:focus-visible { background:#343434; }
-  @media (max-width:32rem) {
-    .header-inner { grid-template-columns:1fr auto; gap:.45rem .9rem; }
-    .header-search { grid-row:2; grid-column:1 / -1; }
-  }
-  .retry-form { display:flex; flex-wrap:wrap; gap:.55rem; margin-top:.6rem; }
-  .retry-form input { flex:1; min-width:12rem; }
-  .site-nav {
-    width: min(100%, 38rem);
-    display: flex;
-    flex-wrap: wrap;
-    gap: 1.25rem;
-    margin: 0 auto 1.35rem;
-    border-bottom: 1px solid var(--border);
-  }
-  .site-nav a { color: var(--muted); text-decoration: none; padding: .45rem .1rem; }
-  .site-nav a[aria-current] { color: var(--text); box-shadow: inset 0 -2px var(--accent); }
-  .bank-filters, .contribution-fields { display: grid; gap: .6rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .form-field { display: grid; gap: .3rem; font-size: .875rem; }
-  .form-field input:not([type=checkbox]), .form-field select { width: 100%; min-width: 0; }
-  select { background: var(--field); color: var(--text); padding: .65rem; border: 1px solid #555; border-radius: .5rem; font: inherit; }
-  .bank-status, .file-status { color: var(--muted); font-size: .875rem; }
-  .bank-status:empty, .file-status:empty { display: none; }
-  .bank-list { margin-top: .85rem; }
-  .bank-entry { padding-block: .95rem; border-bottom: 1px solid var(--border); }
-  .bank-entry:last-child { border-bottom: 0; padding-bottom: 0; }
-  .bank-entry h3, .course-title { margin: 0; font-size: 1rem; }
-  .course-title { margin-top: 1rem; color: var(--muted); }
-  .course-title a { color: inherit; }
-  .exam-detail { margin: .15rem 0 0; color: var(--muted); font-size: .875rem; }
-  .bank-actions { display:flex; flex-wrap:wrap; gap:.5rem; margin-top:.7rem; }
-  .bank-actions button, .bank-actions a { min-height:2.5rem; padding:.38rem .72rem; font-size:.875rem; }
-  .bank-signin { color: var(--text); }
-  dialog { width:min(34rem, calc(100% - 2rem)); padding:1.25rem; color:var(--text); background:var(--panel); border:1px solid #555; }
-  dialog::backdrop { background:#000a; }
-  dialog h2 { margin:0 0 .8rem; font-size:1.2rem; }
-  .contribution-form { display:grid; gap:.9rem; }
-  .contribution-form input[type=file] { padding:.45rem; }
-  .check-row { display:flex; align-items:flex-start; gap:.45rem; font-size:.875rem; }
-  .check-row input { margin-top:.25rem; width:auto; min-height:0; padding:0; }
-  .review-confirmation { margin-top:.65rem; }
-  @media (max-width: 28rem) { .bank-filters, .contribution-fields { grid-template-columns:1fr; } }
+
   @media (max-width: 50rem) {
-    .workspace.split { display: grid; width: min(100%, 38rem); grid-template-columns: minmax(0, 1fr); }
-    .viewer { position:fixed; inset:0; z-index:5; display:flex; flex-direction:column; background:var(--background); }
-    #preview-back { display:inline-flex; align-self:flex-start; margin-bottom:.65rem; min-height:2.5rem; font-size:.875rem; padding:.38rem .65rem; }
-    .viewer-frame { min-height:0; height:auto; flex:1; }
-    body.pdf-open { overflow:hidden; }
+    .workspace.split { grid-template-columns: minmax(0, 1fr); }
+    .viewer { position: fixed; inset: 0; z-index: 5; height: auto; min-height: 0; border-radius: 0; padding: .75rem; background: var(--card); }
+    #preview-back { display: inline-flex; align-self: flex-start; margin-bottom: .65rem; min-height: 2.5rem; font-size: .9rem; padding: .35rem .75rem; }
+    .viewer-frame { min-height: 0; height: auto; flex: 1; }
+    body.pdf-open { overflow: hidden; }
   }
-  @media (max-width: 30rem) {
-    .actions > * { flex: 1; }
-  }
+  @media (max-width: 30rem) { .actions > * { flex: 1; } }
 </style>
 </head>
 <body>
 <header class="site-header">
   <div class="header-inner">
-    <a class="wordmark" href="#converter" aria-label="Clean Copy home"><img src="./favicon.svg" alt="">Clean Copy</a>
-    <form class="header-search" id="course-search" role="search">
-      <input id="bank-course" type="search" aria-label="Course code" placeholder="Find a course" maxlength="24" autocomplete="off">
-      <div class="course-matches" id="course-matches" aria-label="Matching courses" hidden></div>
+    <a class="wordmark" href="#home" aria-label="blank. home">blank<span class="dot">.</span></a>
+    <div class="header-search-slot" id="header-search-slot">
+      <form class="header-search" id="course-search" role="search">
+      <input id="bank-course" type="search" role="combobox" aria-label="Course code" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="course-matches" placeholder="Search for a course (press /)" maxlength="24" autocomplete="off">
+      <div class="course-matches" id="course-matches" role="listbox" aria-label="Matching courses" hidden></div>
     </form>
-    <a class="header-link" href="#exam-bank" id="bank-nav">Exam Bank</a>
+    </div>
+    <nav class="header-nav" aria-label="Main"><a class="header-link" href="#converter" id="converter-nav">Convert</a><a class="header-link" href="#exam-bank" id="bank-nav">Assessments</a><a class="header-link" href="#lists" id="lists-nav">Lists</a></nav>
   </div>
 </header>
+<section id="home-view" hidden aria-labelledby="home-heading">
+  <div class="hero">
+    <h1 id="home-heading">Search for a course</h1>
+    <div class="hero-search-slot" id="hero-search-slot"></div>
+    <p class="hero-alt">or <a href="#converter">paste a Crowdmark link</a></p>
+  </div>
+  <div class="home-body">
+    <p class="bank-status" id="home-stats"></p>
+    <h2 class="section-title" id="home-recent-title" hidden>Recently added</h2>
+    <div id="home-recent"></div>
+    <a class="more-link" href="#exam-bank">Browse all courses</a>
+  </div>
+</section>
 <main>
 <div class="workspace" id="workspace">
   <div>
   <section id="converter-view" aria-labelledby="converter-heading">
-    <h1 id="converter-heading">Crowdmark to Blank PDF</h1>
-    <form class="panel" id="export-form" method="post" novalidate>
+    <h1 id="converter-heading">Paste a Crowdmark link</h1>
+    <form id="export-form" method="post" novalidate>
       <div class="field-heading">
         <span id="links-label">Shareable Crowdmark links</span>
         <a class="help" href="https://www.crowdmark.com/help/sharing-a-graded-assignment-or-test/" target="_blank" rel="noopener noreferrer">Find your link</a>
       </div>
       <div class="entry">
         <div class="links" id="links" role="group" aria-labelledby="links-label"></div>
-        <p class="status" id="prepare-note">Preparing also adds a blank copy to the public exam bank. Use assessments you have permission to share.</p>
         <div class="form-buttons">
           <button type="button" class="secondary" id="add-link">Add another link</button>
-          <button type="submit" id="prepare" aria-describedby="prepare-note">Prepare PDF</button>
+          <button type="submit" id="prepare">Prepare PDF</button>
         </div>
       </div>
       <p class="status" id="status" role="status"></p>
@@ -239,24 +331,45 @@
     <div id="results"></div>
   </section>
   <section id="bank-view" hidden aria-labelledby="bank-heading">
-    <h1 id="bank-heading">Waterloo Exam Bank</h1>
-    <div class="panel">
-      <div id="bank-filters" class="bank-filters">
-        <label class="form-field">Term
-          <select id="bank-term"><option value="">All terms</option></select>
-        </label>
-        <label class="form-field">Assessment type
-          <select id="bank-assessment"><option value="">All types</option><option>Midterm</option><option>Final</option><option>Quiz</option><option>Test</option><option>Exam</option><option>Assignment</option><option>Lab</option><option>Tutorial</option><option>Project</option><option>Practice</option><option>Other</option></select>
-        </label>
-      </div>
-      <div class="bank-actions">
-        <button id="bank-upload" type="button">Contribute a PDF</button>
-        <button class="secondary" id="bank-review" type="button" hidden>Back to exam bank</button>
-      </div>
+    <a class="back-link" id="bank-back" href="#exam-bank" hidden>All courses</a>
+    <div class="bank-head">
+        <h1 id="bank-heading">Assessment Bank</h1>
+    <div class="bank-toolbar" id="bank-toolbar" hidden>
+      <select id="bank-assessment" aria-label="Type"><option value="">All types</option><option>Midterm</option><option>Final</option><option>Quiz</option><option>Test</option><option>Exam</option><option>Assignment</option><option>Lab</option><option>Tutorial</option><option>Project</option><option>Practice</option><option>Other</option></select>
+      <button class="secondary" id="bank-zip" type="button" hidden>Download all</button>
+    </div>
     </div>
     <p class="bank-status" id="bank-status" role="status"></p>
-    <a class="bank-signin" id="bank-signin" href="/signin-with-chatgpt?return_to=%2F%23review" target="_top" hidden>Sign in as an editor</a>
     <div class="bank-list" id="bank-list"></div>
+  </section>
+  <section id="about-view" hidden aria-labelledby="about-heading">
+    <h1 id="about-heading">About</h1>
+    <div class="prose">
+      <p>blank. turns a Crowdmark results link into a blank copy of the assessment, and keeps a public bank of past tests, quizzes, and assignments for Waterloo courses.</p>
+      <p>Crowdmark keeps the original blank pages for every assessment. blank. fetches those pages and rebuilds them as a PDF. It never uses your answers or marks. The only things saved are the blank copy and its course, term, and type. Your link, grades, and any student work are not stored.</p>
+      <p>Anything you convert is added to the public bank, so only use assessments you have permission to share. If something in the bank looks wrong, use the ⋯ menu on its row and choose Report a problem.</p>
+      <h2 class="prose-title">Convert from Crowdmark in one click</h2>
+      <p>Drag this button to your bookmarks bar. Open your shareable Crowdmark results link, click the bookmark, and blank. opens with the link filled in. You still press Prepare PDF to confirm, since converting adds the blank copy to the public bank.</p>
+      <p><a class="bookmarklet" id="bookmarklet" href="#about">Get blank copy</a></p>
+      <p>Your lists are saved in your browser. If you turn on sync, your list names and the assessments in them are also saved on the server under a private code, and nothing else.</p>
+      <p>blank. is a student project. It isn't affiliated with or endorsed by the University of Waterloo or Crowdmark. The source is on <a href="https://github.com/Evan-Lowry/clean-copy" target="_blank" rel="noopener noreferrer">GitHub</a>.</p>
+    </div>
+  </section>
+  <section id="lists-view" hidden aria-labelledby="lists-heading">
+    <a class="back-link" id="lists-back" href="#lists" hidden>All lists</a>
+    <div class="bank-head">
+      <h1 id="lists-heading">Lists</h1>
+      <div class="bank-toolbar">
+        <button class="secondary" id="lists-sync" type="button" hidden>Sync</button>
+        <button class="secondary" id="lists-new" type="button" hidden>New list</button>
+        <button class="secondary" id="lists-share" type="button" hidden>Copy share link</button>
+        <button class="secondary" id="lists-zip" type="button" hidden>Download all</button>
+        <button class="secondary" id="lists-more" type="button" aria-label="List options" aria-haspopup="menu" aria-expanded="false" hidden><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><circle cx="3" cy="8" r="1.4"/><circle cx="8" cy="8" r="1.4"/><circle cx="13" cy="8" r="1.4"/></svg></button>
+        <button id="lists-keep" type="button" hidden>Add to my lists</button>
+      </div>
+    </div>
+    <p class="bank-status" id="lists-status" role="status"></p>
+    <div id="lists-list"></div>
   </section>
   </div>
   <section class="panel viewer" id="viewer" aria-label="PDF preview" hidden>
@@ -266,20 +379,49 @@
   </section>
 </div>
 </main>
-<dialog id="contribution" aria-labelledby="contribution-heading">
-  <h2 id="contribution-heading">Contribute to the exam bank</h2>
-  <form class="contribution-form" id="contribution-form">
-    <label class="form-field" id="upload-field">Blank PDF
-      <input id="contribution-file" type="file" accept="application/pdf,.pdf">
-    </label>
-    <p class="file-status">Clean Copy detects the exam details and publishes the PDF in the exam bank.</p>
-    <p class="file-status" id="contribution-status" role="status"></p>
-    <label class="check-row"><input name="blankConfirmed" type="checkbox" required> <span id="contribution-attestation">I checked that every page is blank and I have permission to share this exam.</span></label>
-    <div class="bank-actions">
-      <button class="secondary" type="button" id="contribution-cancel">Cancel</button>
-      <button type="submit" id="contribution-submit">Add to exam bank</button>
+<footer class="site-footer">
+  <nav class="footer-inner" aria-label="Footer">
+    <a href="#home">Home</a>
+    <a href="#about">About</a>
+    <a href="https://github.com/Evan-Lowry/clean-copy" target="_blank" rel="noopener noreferrer">GitHub</a>
+  </nav>
+</footer>
+<dialog id="report-dialog" aria-labelledby="report-heading">
+  <form id="report-form">
+    <h2 id="report-heading">Report a problem</h2>
+    <p class="status" id="report-exam"></p>
+    <label class="choice"><input type="radio" name="reason" value="student-work" required> Contains student work or marks</label>
+    <label class="choice"><input type="radio" name="reason" value="wrong-details"> Wrong course, term or type</label>
+    <label class="choice"><input type="radio" name="reason" value="other"> Something else</label>
+    <p class="status" id="report-status" role="status"></p>
+    <div class="actions">
+      <button class="secondary" type="button" id="report-cancel">Cancel</button>
+      <button type="submit" id="report-submit">Send report</button>
     </div>
   </form>
+</dialog>
+<dialog id="sync-dialog" aria-labelledby="sync-heading">
+  <div id="sync-off">
+    <h2 id="sync-heading">Sync your lists</h2>
+    <p class="status">Keep your lists on all your devices. There’s no account or email: you get a code to enter on your other devices.</p>
+    <div class="actions"><button type="button" id="sync-start">Turn on sync</button></div>
+    <p class="status">Already have a code?</p>
+    <form id="sync-join" class="retry-form">
+      <input id="sync-code-input" aria-label="Sync code" placeholder="Enter your code" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="24">
+      <button type="submit" class="secondary">Connect</button>
+    </form>
+  </div>
+  <div id="sync-on" hidden>
+    <h2>Sync is on</h2>
+    <p class="status">Enter this code on your other devices. Anyone who has it can see and change your lists, so keep it private.</p>
+    <p class="sync-code" id="sync-code-text"></p>
+    <div class="actions">
+      <button type="button" class="secondary" id="sync-copy">Copy code</button>
+      <button type="button" class="secondary" id="sync-stop">Turn off sync</button>
+    </div>
+  </div>
+  <p class="status" id="sync-status" role="status"></p>
+  <div class="actions"><button type="button" class="secondary" id="sync-close">Close</button></div>
 </dialog>
 <template id="link-template">
   <div class="link-row">
@@ -288,7 +430,7 @@
   </div>
 </template>
 <template id="result-template">
-  <section class="panel result">
+  <section class="result">
     <h2></h2>
     <p class="details" role="status"></p>
     <div class="retry-form" hidden>
@@ -296,8 +438,8 @@
       <button type="button" class="secondary">Retry</button>
     </div>
     <div class="actions" hidden>
-      <button type="button" class="secondary" aria-expanded="false" aria-controls="viewer" hidden>Preview PDF</button>
-      <button type="button" class="download" hidden>Download PDF</button>
+      <button type="button" class="secondary" aria-expanded="false" aria-controls="viewer" hidden>Preview</button>
+      <button type="button" class="download" hidden>Download</button>
     </div>
   </section>
 </template>
@@ -390,6 +532,29 @@
     link.click();
   }
 
+  async function zipFiles(files, archiveName) {
+    const { Zip, ZipPassThrough } = await import('./zip.mjs');
+    const chunks = [];
+    const zip = new Zip((error, chunk) => {
+      if (error) throw error;
+      chunks.push(chunk);
+    });
+    const names = new Set();
+    for (const { pdf, filename } of files) {
+      let name = filename;
+      const stem = filename.replace(/\.pdf$/i, '');
+      for (let suffix = 2; names.has(name.toLowerCase()); suffix++) name = stem + '-' + suffix + '.pdf';
+      names.add(name.toLowerCase());
+      const entry = new ZipPassThrough(name);
+      zip.add(entry);
+      entry.push(new Uint8Array(await pdf.arrayBuffer()), true);
+    }
+    zip.end();
+    const url = URL.createObjectURL(new Blob(chunks, { type: 'application/zip' }));
+    downloadFile(url, archiveName);
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }
+
   downloadAll.addEventListener('click', async () => {
     const rows = batchRows;
     const files = rows.flatMap(row => row.file ? [row.file] : []);
@@ -397,26 +562,7 @@
     downloadAll.textContent = 'Creating ZIP…';
     archiveStatus.textContent = '';
     try {
-      const { Zip, ZipPassThrough } = await import('./zip.mjs');
-      const chunks = [];
-      const zip = new Zip((error, chunk) => {
-        if (error) throw error;
-        chunks.push(chunk);
-      });
-      const names = new Set();
-      for (const { pdf, filename } of files) {
-        let name = filename;
-        const stem = filename.replace(/\.pdf$/i, '');
-        for (let suffix = 2; names.has(name.toLowerCase()); suffix++) name = stem + '-' + suffix + '.pdf';
-        names.add(name.toLowerCase());
-        const entry = new ZipPassThrough(name);
-        zip.add(entry);
-        entry.push(new Uint8Array(await pdf.arrayBuffer()), true);
-      }
-      zip.end();
-      const url = URL.createObjectURL(new Blob(chunks, { type: 'application/zip' }));
-      downloadFile(url, 'clean-copy-pdfs.zip');
-      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      await zipFiles(files, 'blank-pdfs.zip');
     } catch {
       if (rows === batchRows) archiveStatus.textContent = 'Couldn’t create the ZIP. Try again.';
     } finally {
@@ -432,8 +578,8 @@
     const button = activePreview;
     activePreview = undefined;
     button.setAttribute('aria-expanded', 'false');
-    button.textContent = 'Preview PDF';
-    button.closest('article, section')?.classList.remove('preview-selected');
+    button.textContent = 'Preview';
+    button.closest('.list-row, section')?.classList.remove('preview-selected');
     viewer.hidden = true;
     viewerFrame.removeAttribute('src');
     workspace.classList.remove('split');
@@ -458,8 +604,8 @@
     hidePreview();
     activePreview = button;
     button.setAttribute('aria-expanded', 'true');
-    button.textContent = 'Hide preview';
-    const row = button.closest('article, section');
+    button.textContent = 'Close';
+    const row = button.closest('.list-row, section');
     const supported = navigator.pdfViewerEnabled !== false;
     row?.classList.toggle('preview-selected', supported);
     viewerFrame.hidden = !supported;
@@ -468,7 +614,12 @@
     viewer.hidden = false;
     workspace.classList.add('split');
     document.body.classList.add('pdf-open');
-    if (supported) viewerFrame.src = inlineUrl;
+    if (supported) {
+      // Some built-in PDF viewers take focus and scroll the page when they load. Put the page back.
+      const scrollTop = window.scrollY;
+      viewerFrame.onload = () => window.scrollTo(0, scrollTop);
+      viewerFrame.src = inlineUrl;
+    }
     if (matchMedia('(max-width: 50rem)').matches) previewBack.focus({ preventScroll: true });
     else row?.scrollIntoView({ block: 'nearest' });
   }
@@ -589,7 +740,7 @@
       row.title.textContent = title;
       row.details.textContent = count + (count === 1 ? ' blank page' : ' blank pages') +
         (first > 1 ? ' · Booklet pages ' + (first === last ? first : first + '–' + last) : '') +
-        (bankStatus === 'published' ? ' · Added to the exam bank' : published ? ' · Already in the exam bank' : ' · Already submitted');
+        (bankStatus === 'published' ? ' · Added to the assessment bank' : published ? ' · Already in the assessment bank' : ' · Not added to the bank (couldn’t read the course, term, or type)');
       row.openPreview = () => showPdf(row.previewButton, apiBase + previewPath);
       row.previewButton.hidden = false;
       row.previewButton.addEventListener('click', row.openPreview);
@@ -660,6 +811,20 @@
     status.textContent = '';
     status.classList.remove('error');
   });
+</script>
+<script>
+  // Drives the slow drift of the background as the page scrolls (skipped when reduced motion is requested).
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    let queued = false;
+    addEventListener('scroll', () => {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(() => {
+        document.documentElement.style.setProperty('--scroll-y', Math.min(scrollY, 2400) + 'px');
+        queued = false;
+      });
+    }, { passive: true });
+  }
 </script>
 <!-- exam-bank-script -->
 </body>
