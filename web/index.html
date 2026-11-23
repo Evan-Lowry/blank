@@ -147,6 +147,43 @@
     margin-inline: auto;
   }
   .pdf-pages img { width: 100%; height: auto; display: block; background: white; }
+  .site-nav {
+    width: min(100%, 38rem);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.25rem;
+    margin: 0 auto 1.35rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .site-nav:has(+ .split) { width: 100%; }
+  .site-nav a { color: var(--muted); text-decoration: none; padding: .45rem .1rem; }
+  .site-nav a[aria-current] { color: var(--text); box-shadow: inset 0 -2px var(--accent); }
+  .bank-filters, .contribution-fields { display: grid; gap: .6rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .bank-filters > :first-child { grid-column: 1 / -1; }
+  .form-field { display: grid; gap: .3rem; font-size: .875rem; }
+  .form-field input:not([type=checkbox]), .form-field select { width: 100%; min-width: 0; }
+  select { background: var(--field); color: var(--text); padding: .65rem; border: 1px solid #555; border-radius: .5rem; font: inherit; }
+  .bank-status, .file-status { color: var(--muted); font-size: .875rem; }
+  .bank-status:empty, .file-status:empty { display: none; }
+  .bank-list { margin-top: .85rem; }
+  .bank-entry { padding-block: .95rem; border-bottom: 1px solid var(--border); }
+  .bank-entry:last-child { border-bottom: 0; padding-bottom: 0; }
+  .bank-entry h3, .course-title { margin: 0; font-size: 1rem; }
+  .course-title { margin-top: 1rem; color: var(--muted); }
+  .course-title a { color: inherit; }
+  .exam-detail { margin: .15rem 0 0; color: var(--muted); font-size: .875rem; }
+  .bank-actions { display:flex; flex-wrap:wrap; gap:.5rem; margin-top:.7rem; }
+  .bank-actions button, .bank-actions a { min-height:2.5rem; padding:.38rem .72rem; font-size:.875rem; }
+  .bank-signin { color: var(--text); }
+  dialog { width:min(34rem, calc(100% - 2rem)); padding:1.25rem; color:var(--text); background:var(--panel); border:1px solid #555; }
+  dialog::backdrop { background:#000a; }
+  dialog h2 { margin:0 0 .8rem; font-size:1.2rem; }
+  .contribution-form { display:grid; gap:.9rem; }
+  .contribution-form input[type=file] { padding:.45rem; }
+  .check-row { display:flex; align-items:flex-start; gap:.45rem; font-size:.875rem; }
+  .check-row input { margin-top:.25rem; width:auto; min-height:0; padding:0; }
+  .review-confirmation { margin-top:.65rem; }
+  @media (max-width: 28rem) { .bank-filters, .contribution-fields { grid-template-columns:1fr; } }
   @media (max-width: 50rem) {
     .workspace.split { display: grid; width: min(100%, 38rem); grid-template-columns: minmax(0, 1fr); }
     .viewer { position: static; }
@@ -158,9 +195,14 @@
 </head>
 <body>
 <main>
+<nav class="site-nav" aria-label="Clean Copy">
+  <a href="#converter" aria-current="page">Converter</a>
+  <a href="#exam-bank">Exam bank</a>
+</nav>
 <div class="workspace" id="workspace">
   <div>
-    <h1>Crowdmark to Blank PDF</h1>
+  <section id="converter-view" aria-labelledby="converter-heading">
+    <h1 id="converter-heading">Crowdmark to Blank PDF</h1>
     <form class="panel" id="export-form" method="post" novalidate>
       <div class="field-heading">
         <span id="links-label">Shareable Crowdmark links</span>
@@ -176,6 +218,30 @@
       <p class="status" id="status" role="status"></p>
     </form>
     <div id="results"></div>
+  </section>
+  <section id="bank-view" hidden aria-labelledby="bank-heading">
+    <h1 id="bank-heading">Waterloo Exam Bank</h1>
+    <div class="panel">
+      <div id="bank-filters" class="bank-filters">
+        <label class="form-field">Course code
+          <input id="bank-course" type="search" placeholder="STAT 230" maxlength="16">
+        </label>
+        <label class="form-field">Term
+          <select id="bank-term"><option value="">All terms</option></select>
+        </label>
+        <label class="form-field">Assessment type
+          <select id="bank-assessment"><option value="">All types</option><option>Midterm</option><option>Final</option><option>Quiz</option><option>Test</option><option>Other</option></select>
+        </label>
+      </div>
+      <div class="bank-actions">
+        <button id="bank-upload" type="button">Contribute a PDF</button>
+        <button class="secondary" id="bank-review" type="button">Review submissions</button>
+      </div>
+    </div>
+    <p class="bank-status" id="bank-status" role="status"></p>
+    <a class="bank-signin" id="bank-signin" href="/signin-with-chatgpt?return_to=%2F%23review" target="_top" hidden>Sign in as an editor</a>
+    <div class="bank-list" id="bank-list"></div>
+  </section>
   </div>
   <section class="panel viewer" id="viewer" aria-label="PDF preview" hidden>
     <div class="viewer-toolbar" role="group" aria-label="PDF zoom">
@@ -189,6 +255,37 @@
   </section>
 </div>
 </main>
+<dialog id="contribution" aria-labelledby="contribution-heading">
+  <h2 id="contribution-heading">Contribute to the exam bank</h2>
+  <form class="contribution-form" id="contribution-form">
+    <label class="form-field" id="upload-field">Blank PDF
+      <input id="contribution-file" type="file" accept="application/pdf,.pdf">
+    </label>
+    <div class="contribution-fields">
+      <label class="form-field">Course code
+        <input name="course" placeholder="STAT 230" maxlength="16" required>
+      </label>
+      <label class="form-field">Year
+        <input name="year" type="number" min="1900" max="2099" placeholder="2025" required>
+      </label>
+      <label class="form-field">Term
+        <select name="season" required><option value="">Choose a term</option><option value="W">Winter</option><option value="S">Spring</option><option value="F">Fall</option></select>
+      </label>
+      <label class="form-field">Assessment type
+        <select name="assessment" required><option value="">Choose a type</option><option>Midterm</option><option>Final</option><option>Quiz</option><option>Test</option><option>Other</option></select>
+      </label>
+      <label class="form-field">Assessment number (optional)
+        <input name="assessmentNumber" type="number" min="1" max="99" placeholder="2">
+      </label>
+    </div>
+    <p class="file-status" id="contribution-status" role="status"></p>
+    <label class="check-row"><input name="blankConfirmed" type="checkbox" required> I checked that every page is blank and I have permission to share this exam.</label>
+    <div class="bank-actions">
+      <button class="secondary" type="button" id="contribution-cancel">Cancel</button>
+      <button type="submit" id="contribution-submit">Submit for review</button>
+    </div>
+  </form>
+</dialog>
 <template id="link-template">
   <div class="link-row">
     <input type="url" name="link" placeholder="https://app.crowdmark.com/score/…" autocomplete="off" autocapitalize="off" spellcheck="false">
@@ -202,6 +299,7 @@
     <div class="actions" hidden>
       <button type="button" class="secondary" aria-expanded="false" aria-controls="viewer" hidden>Preview PDF</button>
       <a class="download">Download PDF</a>
+      <button type="button" class="secondary contribute" hidden>Contribute to the exam bank</button>
     </div>
   </section>
 </template>
@@ -312,30 +410,32 @@
   function wirePreview(button, pdf, ranges, first) {
     if (!ranges.length) return;
     button.hidden = false;
-    button.addEventListener('click', () => {
-      if (button === activePreview) {
-        hidePreview();
-        return;
-      }
+    button.addEventListener('click', () => showPdf(button, pdf, ranges, first));
+  }
+
+  function showPdf(button, pdf, ranges, first = 1) {
+    if (button === activePreview) {
       hidePreview();
-      activePreview = button;
-      button.setAttribute('aria-expanded', 'true');
-      button.textContent = 'Hide preview';
-      ranges.forEach(([offset, length], index) => {
-        const page = document.createElement('img');
-        page.loading = index === 0 ? 'eager' : 'lazy';
-        page.alt = 'Booklet page ' + (first + index);
-        const url = URL.createObjectURL(pdf.slice(offset, offset + length, 'image/jpeg'));
-        pageUrls.push(url);
-        page.src = url;
-        pages.append(page);
-      });
-      viewer.hidden = false;
-      workspace.classList.add('split');
-      setZoom(100);
-      preview.scrollTo(0, 0);
-      if (matchMedia('(max-width: 50rem)').matches) viewer.scrollIntoView({ block: 'start' });
+      return;
+    }
+    hidePreview();
+    activePreview = button;
+    button.setAttribute('aria-expanded', 'true');
+    button.textContent = 'Hide preview';
+    ranges.forEach(([offset, length], index) => {
+      const page = document.createElement('img');
+      page.loading = index === 0 ? 'eager' : 'lazy';
+      page.alt = 'Booklet page ' + (first + index);
+      const url = URL.createObjectURL(pdf.slice(offset, offset + length, 'image/jpeg'));
+      pageUrls.push(url);
+      page.src = url;
+      pages.append(page);
     });
+    viewer.hidden = false;
+    workspace.classList.add('split');
+    setZoom(100);
+    preview.scrollTo(0, 0);
+    if (matchMedia('(max-width: 50rem)').matches) viewer.scrollIntoView({ block: 'start' });
   }
 
   function addResult(index) {
@@ -345,13 +445,14 @@
     const actions = card.querySelector('.actions');
     const previewButton = actions.querySelector('button');
     const download = actions.querySelector('a');
+    const contribute = actions.querySelector('.contribute');
 
     title.id = 'assessment-' + (index + 1);
     title.textContent = 'Assessment ' + (index + 1);
     card.setAttribute('aria-labelledby', title.id);
     details.textContent = 'Waiting…';
     results.append(card);
-    return { title, details, actions, previewButton, download };
+    return { title, details, actions, previewButton, download, contribute };
   }
 
   async function getBlankReferences(link) {
@@ -426,6 +527,10 @@
       row.details.textContent = count + (count === 1 ? ' blank page.' : ' blank pages.') +
         (first > 1 ? ' Crowdmark supplied booklet pages ' + (first === last ? first : first + '–' + last) + '.' : '');
       if (Array.isArray(ranges)) wirePreview(row.previewButton, pdf, ranges, first);
+      if (Array.isArray(ranges) && ranges.length) {
+        row.contribute.hidden = false;
+        row.contribute.addEventListener('click', () => openContribution({ title, pdf, ranges }));
+      }
       row.download.href = objectUrl(pdf);
       row.download.download = filename || 'crowdmark-assessment-blank.pdf';
       row.actions.hidden = false;
@@ -478,5 +583,6 @@
     status.classList.remove('error');
   });
 </script>
+<!-- exam-bank-script -->
 </body>
 </html>

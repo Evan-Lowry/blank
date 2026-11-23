@@ -154,13 +154,29 @@ async function exportAssessment(request) {
 }
 
 export default {
-  async fetch(request) {
-    const { pathname, origin } = new URL(request.url);
+  async fetch(request, env = {}) {
+    const url = new URL(request.url);
+    const { pathname, origin } = url;
+    if (pathname.startsWith('/api/bank/')) {
+      try {
+        return await handleExamBank(request, url, env);
+      } catch (error) {
+        console.error('Exam bank request failed:', error.name, error.message.split('\n')[0]);
+        return bankError('The exam bank could not complete this request.', 502);
+      }
+    }
+    if (request.method === 'GET' && (pathname === '/pdfjs.mjs' || pathname === '/pdfjs-worker.mjs')) {
+      return new Response(pathname === '/pdfjs.mjs' ? PDFJS : PDFJS_WORKER, { headers: {
+        'Content-Type': 'text/javascript; charset=utf-8',
+        'Cache-Control': 'public, max-age=3600',
+        'X-Content-Type-Options': 'nosniff',
+      } });
+    }
     if (pathname === '/' && request.method === 'GET') {
       return new Response(HTML, { headers: {
         'Content-Type': 'text/html; charset=utf-8',
         'Referrer-Policy': 'no-referrer',
-        'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' blob:; connect-src 'self' https://app.crowdmark.com; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+        'Content-Security-Policy': "default-src 'none'; script-src 'self' 'unsafe-inline'; worker-src 'self'; style-src 'unsafe-inline'; img-src 'self' blob:; connect-src 'self' https://app.crowdmark.com; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
         ...privateHeaders,
       } });
     }
