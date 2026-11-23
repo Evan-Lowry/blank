@@ -187,10 +187,7 @@ function createExamEntry(exam, review = false) {
   feedback.setAttribute('role', 'status');
   button.addEventListener('click', () => {
     const opening = button !== activePreview;
-    showPdf(button, {
-      inlineUrl: apiBase + '/api/bank/' + filePath + '?view=1',
-      download: review ? undefined : () => { window.location.href = apiBase + '/api/bank/' + filePath; },
-    });
+    showPdf(button, apiBase + '/api/bank/' + filePath + '?view=1');
     if (opening) onPreview?.();
   });
   actions.append(button);

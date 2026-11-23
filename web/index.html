@@ -119,9 +119,6 @@
     position: sticky;
     top: 1rem;
   }
-  .viewer-toolbar { display:flex; justify-content:flex-end; align-items:center; flex-wrap:wrap; gap:.5rem; }
-  .viewer-toolbar button { min-height:2.5rem; font-size:.875rem; padding:.38rem .65rem; }
-  .viewer-toolbar:has(button:not([hidden]):not(#preview-back)) { margin-bottom:.65rem; }
   .viewer-frame { width:100%; height:70vh; display:block; border:1px solid var(--border); background:var(--field); }
   .viewer-message { margin:.25rem 0; color:var(--muted); font-size:.875rem; }
   .preview-selected { background:#282828; }
@@ -195,8 +192,7 @@
   @media (max-width: 50rem) {
     .workspace.split { display: grid; width: min(100%, 38rem); grid-template-columns: minmax(0, 1fr); }
     .viewer { position:fixed; inset:0; z-index:5; display:flex; flex-direction:column; background:var(--background); }
-    #preview-back { display:inline-flex; }
-    .viewer-toolbar { justify-content:space-between; margin-bottom:.65rem; }
+    #preview-back { display:inline-flex; align-self:flex-start; margin-bottom:.65rem; min-height:2.5rem; font-size:.875rem; padding:.38rem .65rem; }
     .viewer-frame { min-height:0; height:auto; flex:1; }
     body.pdf-open { overflow:hidden; }
   }
@@ -236,6 +232,10 @@
       </div>
       <p class="status" id="status" role="status"></p>
     </form>
+    <div class="actions" id="batch-actions" hidden>
+      <button id="download-all" type="button">Download all</button>
+      <p class="status" id="archive-status" role="status"></p>
+    </div>
     <div id="results"></div>
   </section>
   <section id="bank-view" hidden aria-labelledby="bank-heading">
@@ -260,10 +260,7 @@
   </section>
   </div>
   <section class="panel viewer" id="viewer" aria-label="PDF preview" hidden>
-    <div class="viewer-toolbar">
-      <button class="secondary" type="button" id="preview-back">Back</button>
-      <button id="preview-download" type="button" hidden>Download PDF</button>
-    </div>
+    <button class="secondary" type="button" id="preview-back">Back</button>
     <p class="viewer-message" id="viewer-message" role="status" hidden></p>
     <iframe id="viewer-frame" class="viewer-frame" title="PDF preview" referrerpolicy="no-referrer" hidden></iframe>
   </section>
@@ -312,19 +309,20 @@
   const addLink = document.querySelector('#add-link');
   const prepare = document.querySelector('#prepare');
   const status = document.querySelector('#status');
+  const batchActions = document.querySelector('#batch-actions');
+  const downloadAll = document.querySelector('#download-all');
+  const archiveStatus = document.querySelector('#archive-status');
   const results = document.querySelector('#results');
   const template = document.querySelector('#result-template');
   const workspace = document.querySelector('#workspace');
   const viewer = document.querySelector('#viewer');
   const viewerFrame = document.querySelector('#viewer-frame');
   const previewBack = document.querySelector('#preview-back');
-  const previewDownload = document.querySelector('#preview-download');
   const viewerMessage = document.querySelector('#viewer-message');
   const objectUrls = new Set();
+  let batchRows = [];
   let activePreview;
   let previewScroll;
-  let currentPdf;
-  previewDownload.addEventListener('click', () => currentPdf?.download?.());
 
   function updateLinkLabels() {
     [...fields.children].forEach((row, index) => {
@@ -385,11 +383,54 @@
     return url;
   }
 
+  function downloadFile(url, filename) {
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+  }
+
+  downloadAll.addEventListener('click', async () => {
+    const rows = batchRows;
+    const files = rows.flatMap(row => row.file ? [row.file] : []);
+    downloadAll.disabled = true;
+    downloadAll.textContent = 'Creating ZIP…';
+    archiveStatus.textContent = '';
+    try {
+      const { Zip, ZipPassThrough } = await import('./zip.mjs');
+      const chunks = [];
+      const zip = new Zip((error, chunk) => {
+        if (error) throw error;
+        chunks.push(chunk);
+      });
+      const names = new Set();
+      for (const { pdf, filename } of files) {
+        let name = filename;
+        const stem = filename.replace(/\.pdf$/i, '');
+        for (let suffix = 2; names.has(name.toLowerCase()); suffix++) name = stem + '-' + suffix + '.pdf';
+        names.add(name.toLowerCase());
+        const entry = new ZipPassThrough(name);
+        zip.add(entry);
+        entry.push(new Uint8Array(await pdf.arrayBuffer()), true);
+      }
+      zip.end();
+      const url = URL.createObjectURL(new Blob(chunks, { type: 'application/zip' }));
+      downloadFile(url, 'clean-copy-pdfs.zip');
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch {
+      if (rows === batchRows) archiveStatus.textContent = 'Couldn’t create the ZIP. Try again.';
+    } finally {
+      if (rows === batchRows) {
+        downloadAll.disabled = false;
+        downloadAll.textContent = 'Download all';
+      }
+    }
+  });
+
   function hidePreview(restorePosition = false) {
     if (!activePreview) return;
     const button = activePreview;
     activePreview = undefined;
-    currentPdf = undefined;
     button.setAttribute('aria-expanded', 'false');
     button.textContent = 'Preview PDF';
     button.closest('article, section')?.classList.remove('preview-selected');
@@ -408,7 +449,7 @@
     if (event.key === 'Escape') hidePreview(true);
   });
 
-  function showPdf(button, source) {
+  function showPdf(button, inlineUrl) {
     if (button === activePreview) {
       hidePreview(true);
       return;
@@ -416,20 +457,18 @@
     if (!activePreview) previewScroll = window.scrollY;
     hidePreview();
     activePreview = button;
-    currentPdf = source;
     button.setAttribute('aria-expanded', 'true');
     button.textContent = 'Hide preview';
     const row = button.closest('article, section');
-    row?.classList.add('preview-selected');
-    previewDownload.hidden = !source.download;
     const supported = navigator.pdfViewerEnabled !== false;
+    row?.classList.toggle('preview-selected', supported);
     viewerFrame.hidden = !supported;
     viewerMessage.hidden = supported;
     viewerMessage.textContent = supported ? '' : 'This browser cannot display PDFs in the page.';
     viewer.hidden = false;
     workspace.classList.add('split');
     document.body.classList.add('pdf-open');
-    if (supported) viewerFrame.src = source.inlineUrl;
+    if (supported) viewerFrame.src = inlineUrl;
     if (matchMedia('(max-width: 50rem)').matches) previewBack.focus({ preventScroll: true });
     else row?.scrollIntoView({ block: 'nearest' });
   }
@@ -545,21 +584,16 @@
       const pdf = await response.blob();
       if (!row.card.isConnected) return false;
       const url = objectUrl(pdf);
-      const download = () => {
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = filename;
-        link.click();
-      };
+      row.file = { pdf, filename };
       row.title.textContent = title;
       row.details.textContent = count + (count === 1 ? ' blank page' : ' blank pages') +
         (first > 1 ? ' · Booklet pages ' + (first === last ? first : first + '–' + last) : '') +
         (bankStatus === 'duplicate' ? ' · Already submitted' : ' · Submitted for review');
-      row.openPreview = () => showPdf(row.previewButton, { inlineUrl: apiBase + previewPath, download });
+      row.openPreview = () => showPdf(row.previewButton, apiBase + previewPath);
       row.previewButton.hidden = false;
       row.previewButton.addEventListener('click', row.openPreview);
       row.download.hidden = false;
-      row.download.addEventListener('click', download);
+      row.download.addEventListener('click', () => downloadFile(url, filename));
       row.retryGroup.hidden = true;
       row.actions.hidden = false;
       return true;
@@ -576,7 +610,8 @@
   function summarizeBatch() {
     if (prepare.disabled || results.childElementCount < 2) return;
     const total = results.childElementCount;
-    const found = results.querySelectorAll('.actions:not([hidden])').length;
+    const found = batchRows.filter(row => row.file).length;
+    batchActions.hidden = found < 2;
     status.textContent = found + ' of ' + total + ' assessments found.';
   }
 
@@ -595,7 +630,11 @@
     results.replaceChildren();
     for (const url of objectUrls) URL.revokeObjectURL(url);
     objectUrls.clear();
-    const rows = links.map((link, index) => addResult(index, link));
+    const rows = batchRows = links.map((link, index) => addResult(index, link));
+    batchActions.hidden = true;
+    downloadAll.disabled = false;
+    downloadAll.textContent = 'Download all';
+    archiveStatus.textContent = '';
     prepare.disabled = true;
     prepare.textContent = 'Preparing…';
     status.textContent = '';

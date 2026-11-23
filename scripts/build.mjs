@@ -9,7 +9,9 @@ const [template, bankScript, pdf, bank, worker] = await Promise.all([
   read('worker/index.js'),
 ]);
 const js = 'text/javascript; charset=utf-8';
+const zipLicense = await read('node_modules/fflate/LICENSE');
 const assets = {
+  '/zip.mjs': [js, '/*\n' + zipLicense + '\n*/\n' + await read('node_modules/fflate/esm/browser.js')],
   '/pdfjs.mjs': [js, await read('node_modules/pdfjs-dist/build/pdf.min.mjs')],
   '/pdfjs-worker.mjs': [js, await read('node_modules/pdfjs-dist/build/pdf.worker.min.mjs')],
   '/favicon.svg': ['image/svg+xml', await read('web/favicon.svg')],
