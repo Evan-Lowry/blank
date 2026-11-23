@@ -144,7 +144,7 @@ async function exportAssessment(request, env) {
   }
   const id = scoreId(input?.link);
   if (input?.submitForReview !== true) {
-    throw new ExportError(422, 'Refresh blank. before preparing this PDF.');
+    throw new ExportError(422, 'Refresh unmarked. before preparing this PDF.');
   }
   if (!env.DB || !env.BUCKET) throw new ExportError(503, 'The assessment bank is currently unavailable.');
   // Both guards run before anything is requested from Crowdmark.
@@ -231,14 +231,14 @@ async function handleRequest(request, env) {
     const siteKey = turnstileSiteKey(env);
     const challenge = siteKey ? ' https://challenges.cloudflare.com' : '';
     let page = siteKey ? HTML.replace('name="turnstile-site-key" content=""', 'name="turnstile-site-key" content="' + siteKey + '"') : HTML;
-    const meta = sharePath ? await sharePageMeta(pathname, env) : undefined;
+    const meta = sharePath ? await sharePageMeta(pathname, env, url.origin) : undefined;
     if (meta) {
-      const title = escapeHtml(meta.title + ' · blank.');
+      const title = escapeHtml(meta.title + ' · unmarked.');
       const description = escapeHtml(meta.description);
       page = page
-        .replace(/<title>[^<]*<\/title>/, '<title>' + title + '</title>')
-        .replace(/<meta name="description" content="[^"]*">/, '<meta name="description" content="' + description + '">')
-        .replace('</head>', '<meta property="og:type" content="website"><meta property="og:site_name" content="blank."><meta property="og:title" content="' + title + '"><meta property="og:description" content="' + description + '"><meta property="og:url" content="' + escapeHtml(url.origin + pathname) + '"><meta name="twitter:card" content="summary"></head>');
+        .replace(/<title>[^<]*<\/title>/, () => '<title>' + title + '</title>')
+        .replace(/<meta name="description" content="[^"]*">/, () => '<meta name="description" content="' + description + '">')
+        .replace('</head>', () => '<meta property="og:type" content="website"><meta property="og:site_name" content="unmarked."><meta property="og:title" content="' + title + '"><meta property="og:description" content="' + description + '"><meta property="og:url" content="' + escapeHtml(url.origin + pathname) + '"><meta name="twitter:card" content="summary">' + (meta.image ? '<meta property="og:image" content="' + escapeHtml(meta.image) + '"><meta property="og:image:type" content="image/jpeg"><meta property="og:image:alt" content="' + title + '"><meta name="twitter:image" content="' + escapeHtml(meta.image) + '">' : '') + '</head>');
     }
     return new Response(page, { headers: {
       'Content-Type': 'text/html; charset=utf-8',

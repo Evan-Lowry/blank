@@ -66,7 +66,7 @@ const bankHeaders = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'no
 const seasonLabels = { W: 'Winter', S: 'Spring', F: 'Fall' };
 
 // What a pasted link should say in a chat app: /e/<id> is one assessment, /MATH137 is a course. Only public entries.
-async function sharePageMeta(pathname, env) {
+async function sharePageMeta(pathname, env, origin) {
   if (!env.DB) return;
   const exam = /^\/e\/([a-f0-9-]{36})$/.exec(pathname);
   const course = /^\/([A-Za-z]{2,8}\d{3}[A-Za-z]?)$/.exec(pathname);
@@ -79,17 +79,20 @@ async function sharePageMeta(pathname, env) {
       const kind = row.assessment ? row.assessment + (row.assessment_number ? ' ' + row.assessment_number : '') : '';
       return {
         title: spaced(row.course) + ' · ' + [termName, kind].filter(Boolean).join(' '),
-        description: 'A blank ' + row.page_count + '-page copy' + ' to practise with. Free on blank.',
+        description: 'A blank ' + row.page_count + '-page copy' + ' to practise with. Free on unmarked.',
+        image: origin + '/api/bank/thumb/' + exam[1] + '.jpg',
       };
     }
     if (course) {
       const code = course[1].toUpperCase();
       const row = await env.DB.prepare("SELECT COUNT(*) AS n, MAX(term) AS latest FROM exam_bank WHERE course = ? AND status = 'approved'").bind(code).first();
       if (!row?.n) return;
+      const newest = await env.DB.prepare("SELECT id FROM exam_bank WHERE course = ? AND status = 'approved' ORDER BY term DESC, submitted_at DESC LIMIT 1").bind(code).first();
       const latest = row.latest && seasonLabels[row.latest.at(-1)] ? ' Latest: ' + seasonLabels[row.latest.at(-1)] + ' ' + row.latest.slice(0, 4) + '.' : '';
       return {
         title: spaced(code) + ' assessments',
-        description: row.n + (row.n === 1 ? ' past assessment' : ' past assessments') + ' to practise with.' + latest + ' Free on blank.',
+        description: row.n + (row.n === 1 ? ' past assessment' : ' past assessments') + ' to practise with.' + latest + ' Free on unmarked.',
+        image: newest ? origin + '/api/bank/thumb/' + newest.id + '.jpg' : undefined,
       };
     }
   } catch (error) {
@@ -181,7 +184,7 @@ async function checkPublishLimits(env) {
   ).first();
   if (usage.pages >= maxPages || usage.today >= maxDaily) {
     console.error('LIMIT_REACHED: publishing is paused', JSON.stringify({ pages: usage.pages, today: usage.today, maxPages, maxDaily }));
-    throw new ExportError(503, 'blank. has reached its free storage limit for now, so new assessments can’t be added. Please try again later.');
+    throw new ExportError(503, 'unmarked. has reached its free storage limit for now, so new assessments can’t be added. Please try again later.');
   }
 }
 
@@ -297,6 +300,27 @@ async function listExams(url, env) {
     "SELECT course, COUNT(*) AS count FROM exam_bank WHERE status = 'approved' AND course <> '' AND course LIKE ? GROUP BY course ORDER BY course LIMIT 12"
   ).bind(course + '%').all() : { results: [] };
   return bankJson({ exams, terms: terms.map(row => row.term), courses });
+}
+
+// The first page of a public assessment as a JPEG, for link previews. The PDF already holds each page as a JPEG, so this
+// reads just those bytes from R2 using the offsets recorded when the PDF was made.
+async function getThumbnail(id, env) {
+  const entry = await env.DB.prepare("SELECT page_images FROM exam_bank WHERE id = ? AND status = 'approved' AND course <> ''").bind(id).first();
+  let first;
+  try {
+    first = JSON.parse(entry?.page_images || '[]')[0];
+  } catch {
+    // An unreadable record has no thumbnail.
+  }
+  if (!Array.isArray(first) || !Number.isSafeInteger(first[0]) || !Number.isSafeInteger(first[1]) || first[1] < 1) return bankError('Thumbnail not found.', 404);
+  const object = await env.BUCKET.get('exams/' + id + '.pdf', { range: { offset: first[0], length: first[1] } });
+  if (!object) return bankError('Thumbnail not found.', 404);
+  return new Response(object.body, { headers: {
+    'Content-Type': 'image/jpeg',
+    'Content-Length': String(first[1]),
+    'Cache-Control': 'public, max-age=86400',
+    'X-Content-Type-Options': 'nosniff',
+  } });
 }
 
 async function getBankPdf(id, inline, env) {
@@ -450,6 +474,8 @@ async function handleExamBank(request, url, env) {
   if (path === '/api/bank/report' && mode === 'POST') return reportExam(request, env);
   const preview = new RegExp('^/api/bank/preview/(' + entryId + ')\\.pdf$').exec(path);
   if (preview && mode === 'GET') return getPdfPreview(preview[1], env);
+  const thumb = new RegExp('^/api/bank/thumb/(' + entryId + ')\\.jpg$').exec(path);
+  if (thumb && mode === 'GET') return getThumbnail(thumb[1], env);
   const pdfMatch = new RegExp('^/api/bank/pdf/(' + entryId + ')$').exec(path);
   if (pdfMatch && mode === 'GET') return getBankPdf(pdfMatch[1], url.searchParams.get('view') === '1', env);
   return bankError('Not found.', 404);

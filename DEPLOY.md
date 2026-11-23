@@ -1,4 +1,4 @@
-# Running blank. on Cloudflare (free plan)
+# Running unmarked. on Cloudflare (free plan)
 
 Cloudflare is the only place this project runs: one Worker, a D1 database (`DB`) and an R2 bucket (`BUCKET`),
 configured in `wrangler.jsonc`. Commands run from the project root.
